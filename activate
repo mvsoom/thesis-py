@@ -7,5 +7,10 @@ export CACHEDIR=$PROJECTDIR/cache
 
 export PYTHONPYCACHEPREFIX=$CACHEDIR/pyc
 
+# https://github.com/pyro-ppl/numpyro/issues/364
+# Disable this when running on GPUs
+NUM_CORES=$(nproc --all)
+export XLA_FLAGS=--xla_force_host_platform_device_count=$NUM_CORES
+
 export WORKING_ENVIRONMENT_ACTIVATED=
 echo Working environment activated
