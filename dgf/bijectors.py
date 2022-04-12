@@ -2,11 +2,15 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
 # https://github.com/tensorflow/probability/issues/1523
+# Note: if this results in too much overhead, we could implement the `bounded_exp_bijector()`
+# from scratch with https://github.com/yonesuke/softclip. The implementation of this GitHub
+# repo is unfortunately different from the one of TF probability.
 import logging
-logger = logging.getLogger("root")
+logger = logging.getLogger()
 class CheckTypesFilter(logging.Filter):
     def filter(self, record):
         return "check_types" not in record.getMessage()
+logger.addFilter(CheckTypesFilter())
 
 def bounded_exp_bijector(low, high, hinge_factor=0.01):
     """
@@ -27,6 +31,3 @@ def bounded_exp_bijector(low, high, hinge_factor=0.01):
     # where `b = bounded_exp_bijector(low, high, hinge_factor)`.
     hinge_softness = hinge_factor * jnp.abs(low)
     return tfb.Chain([tfb.SoftClip(low, high, hinge_softness), tfb.Exp()])
-
-def multi_bounded_exp_bijector(low, high, hinge_factor=0.01):
-    pass
