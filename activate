@@ -1,0 +1,11 @@
+# Run as `$ source activate`
+source venv/bin/activate
+
+export PROJECTDIR=$(pwd)
+export DATADIR=$PROJECTDIR/../data
+export CACHEDIR=$PROJECTDIR/cache
+
+export PYTHONPYCACHEPREFIX=$CACHEDIR/pyc
+
+export WORKING_ENVIRONMENT_ACTIVATED=
+echo Working environment activated
