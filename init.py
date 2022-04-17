@@ -6,6 +6,7 @@ __all__ = [
     '__projectdir__',
     '__datadir__',
     '__cachedir__',
+    '__memory__',
     'jax',
     'jnp'
 ]
@@ -23,6 +24,10 @@ def __datadir__(s=''):
     return pathlib.Path(os.environ['DATADIR']) / s
 def __cachedir__(s=''):
     return pathlib.Path(os.environ['CACHEDIR']) / s
+
+# Configure joblib's caching mechanism
+import joblib
+__memory__ = joblib.Memory(__cachedir__('joblib'), verbose=2)
 
 # Import and configure JAX
 import jax
