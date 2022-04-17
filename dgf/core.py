@@ -164,6 +164,8 @@ def loglikelihood_hilbert(R, y, noise_power):
 def loglikelihood_hilbert_grid(kernel, var, scale, M, y, noise_power):
     """Evaluate the log likelihood of a Hilbert kernel on a grid
     
+    Note that it is required to have `N > M`.
+    
     This function is equivalent to `loglikelihood_hilbert()` evaluated on a grid spanning
     the compact domain `[0, L]`:
     ````
@@ -181,12 +183,12 @@ def loglikelihood_hilbert_grid(kernel, var, scale, M, y, noise_power):
         
         # Calculate the log likelihood using the general method
         R = kernelmatrix_root_hilbert(kernel, var, scale, t, M, L)
-        L = loglikelihood_hilbert(R, y, noise_power)
+        L_general = loglikelihood_hilbert(R, y, noise_power)
         
         # Now make use of the fact that the grid spans the compact domain `[0, L]`
         L_grid = loglikelihood_hilbert_grid(kernel, var, scale, M, y, noise_power)
         
-        assert(np.isclose(L, L_grid))
+        assert(np.isclose(L_general, L_grid))
     ````
     As can be seen from the above code, the grid is not given as an argument but implied
     by the data `y`; it is `[0, 1, 2, ..., N - 1]`, where `N = len(y)`. Since there is no
@@ -207,6 +209,7 @@ def loglikelihood_hilbert_grid(kernel, var, scale, M, y, noise_power):
     a = jnp.fft.rfft(y, 2*L)
     b = -jnp.sqrt(2/L)*a.imag[1:M+1]
 
+    # If not `N > M` the following line will raise an Exception.
     bilinear_term = 1/noise_power*(jnp.dot(y, y) - jnp.dot(b, b/Z_diag))
 
     order_term = N*jnp.log(2*jnp.pi)
