@@ -1,10 +1,16 @@
 import jax
 import jax.numpy as jnp
-
 from tensorflow_probability.substrates.jax.math import psd_kernels as jax_psd_kernels
 from jax.nn import relu as ramp
 from jax import jit, value_and_grad, grad
+
+import sys
 from functools import partial
+
+def resolve(kernel_name):
+    """Avoid recalculating cached functions which have kernel arguments"""
+    this_module = sys.modules[__name__]
+    return getattr(this_module, kernel_name)
 
 # Note: we cannot JIT class methods with `@partial(jit, static_argnums=0)`
 # since it will trigger recompilation each time a new instance of the class is made.
