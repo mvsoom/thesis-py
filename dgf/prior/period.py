@@ -6,6 +6,8 @@ from dgf import isokernels
 from dgf import core
 from dgf import constants
 
+import tensorflow_probability.substrates.jax.distributions as tfd
+
 import numpy as np
 import dynesty
 import parselmouth
@@ -254,7 +256,7 @@ def posterior_mean_point_estimate(results):
     del cov
     return np.squeeze(mu)
 
-def get_period_prior_z():
+def fit_aplawd():
     # Get posterior mean estimates of the 'true' pitch periods model with highest evidence
     true_results = model_true_pitch_periods('Matern32Kernel', HILBERT_EXPANSION_ORDER)
     mean, sigma, scale, noise_sigma = posterior_mean_point_estimate(true_results)
@@ -269,3 +271,18 @@ def get_period_prior_z():
         'period_praat_observation_var_z': praat_sigma**2,
         'period_lengthscale_z': scale
     }
+
+def marginal_period_prior():
+    fit = fit_aplawd()
+    normal_z = tfd.Normal(
+        loc=fit['period_mean_z'],
+        scale=np.sqrt(fit['period_var_z'])
+    )
+    
+    prior = tfd.TransformedDistribution(
+      distribution=normal_z,
+      bijector=bijectors.period_bijector(),
+      name='MarginalPeriodDistribution'
+    )
+    
+    return prior
