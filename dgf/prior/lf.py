@@ -9,27 +9,27 @@ Note that `Re` in Fant (1994) is called `Rd` in Perrotin (2021)!
 """
 
 from dgf.prior import lf
+from dgf.prior import period
+from lib import lfmodel
+from init import __memory__
 
+import jax
 import numpy as np
 
-NUMSAMPLES = int(1e5)
-
+_UNCONTAINED = np.inf
 def _contains(a, x):
     return (a[0] < x) and (x < a[1])
-    #return (a[0] < x) & (x < a[1])
-    #import jax.lax
-    #return jax.lax.cond((a[0] < x) & (x < a[1]), lambda: 1, lambda: 0)
 
 #########################
 # Sampling $p(R_k|R_e)$ #
 #########################
 ALPHA_M_RANGE = np.array([0.55, 0.8]) # Common range; Drugman (2019), Table 1
 
-def estimate_sigma2_Rk(seed=5571):
+def estimate_sigma2_Rk(numsamples=10000, seed=5571):
     """
     Estimate the variance of Rk from the known theoretical range of $\alpha_m$.
     """
-    alpha_m = np.random.default_rng(seed).uniform(*ALPHA_M_RANGE, size=NUMSAMPLES)
+    alpha_m = np.random.default_rng(seed).uniform(*ALPHA_M_RANGE, size=numsamples)
     Rk = 1/alpha_m - 1 # Perrotin (2021) Eq. (A1)
     return np.var(Rk)
 
@@ -55,7 +55,7 @@ def sample_Rk(Re, rng):
     Use the regression in Fant (1994) Eq. (2) + reverse-engineered noise based on the
     given `r = 0.93` value and the estimated standard deviation of Rk.
     """
-    Rk = -1
+    Rk = _UNCONTAINED
     while not _contains(RK_RANGE, Rk): Rk = (22.4 + 11.8*Re)/100 + RK_STDDEV*rng.normal()
     return Rk
 
@@ -65,13 +65,13 @@ def sample_Rk(Re, rng):
 OQ_RANGE = np.array([0.3, 0.9]) # Common range; Drugman (2019), Table 1
 QA_RANGE = np.array([0., 1.0]) # Theoretical range; Doval (2006), p. 5
 
-def estimate_sigma2_Ra(seed=6236):
+def estimate_sigma2_Ra(numsamples=10000, seed=6236):
     """
     Estimate the variance of Ra from the known theoretical range of OQ and Qa.
     """
     rng = np.random.default_rng(seed)
-    Oq = rng.uniform(*OQ_RANGE, NUMSAMPLES) # @Drugman2019, Table 1
-    Qa = rng.uniform(*QA_RANGE, NUMSAMPLES) # Doval (2006), p. 5
+    Oq = rng.uniform(*OQ_RANGE, numsamples) # @Drugman2019, Table 1
+    Qa = rng.uniform(*QA_RANGE, numsamples) # Doval (2006), p. 5
     Ra = (1 - Oq)*Qa
     return np.var(Ra)
 
@@ -97,7 +97,7 @@ def sample_Ra(Re, rng):
     
     Note that `Re` in Fant (1994) is called `Rd` in Perrotin (2021)!
     """
-    Ra = -1
+    Ra = _UNCONTAINED
     while not _contains(RA_RANGE, Ra): Ra = (-1 + 4.8*Re)/100 + RA_STDDEV*rng.normal()
     return Ra
 
@@ -118,7 +118,7 @@ def sample_R_params(Re, rng):
     * Note that `Re` in Fant (1994) is called `Rd` in Perrotin (2021).
     * Note that `Rg` can be larger than 1, unlike `Ra `and `Rg` (Fant 1994, Fig. 3)
     """
-    Rg = -1
+    Rg = _UNCONTAINED
     while not _contains(RG_RANGE, Rg):
         Ra = sample_Ra(Re, rng)
         Rk = sample_Rk(Re, rng)
@@ -140,5 +140,38 @@ def calculate_Re(T0, Td):
     Re = Td * F0 / (0.11) # Fant (1994) Eq. (4)
     return Re
 
-def sample_generic_params(dt, Ee):
-    pass
+def sample_consistent_lf_params(Ee, T0, rng):
+    p = dict()
+    p['Ee'] = Ee
+    p['T0'] = T0
+    
+    # We choose the declination time `T0 = U_0/E_e` as the independent variable
+    # In this way we can induce correlations between T0 and all other variables, as
+    # empirically observed [@Henrich2005].
+    # The range is decided on the following:
+    # "The declination time is usually in [0.5 to 1 msec]" Fant (1994) p. 1451
+    Td = rng.uniform(0.25, 1.5) # msec # FIXME: better range
+    p['Re'] = lf.calculate_Re(T0, Td)
+    
+    accept_sample = False
+    while not accept_sample:
+        p['Ra'], p['Rk'], p['Rg'] = lf.sample_R_params(p['Re'], rng)
+        p = lfmodel.convert_lf_params(p, 'R -> T')
+
+        accept_sample = lfmodel.consistent_lf_params(p)
+
+    return p
+
+#@__memory__.cache
+def sample_lf_params(numsamples=10000, seed=2387):
+    # We have to manage Numpy's and JAX RNGs
+    key, subkey = jax.random.split(jax.random.PRNGKey(seed))
+    rng_seed = int(jax.random.randint(subkey, (1,), minval=0, maxval=int(1e4)))
+    rng = np.random.default_rng(rng_seed)
+    
+    Ee = 1.
+    T0 = period.marginal_prior().sample(numsamples, seed=key)
+    list_of_dicts = [sample_consistent_lf_params(Ee, float(T), rng) for T in T0]
+    p = {k: np.array([d[k] for d in list_of_dicts]) for k in list_of_dicts[0]}
+    p = lfmodel.convert_lf_params(p, 'T -> generic')
+    return p
