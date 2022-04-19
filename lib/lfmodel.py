@@ -1,3 +1,4 @@
+"""A JAX implementation of the Liljencrants-Fant model for the glottal flow waveform"""
 import jax
 import jax.numpy as jnp
 import jaxopt
