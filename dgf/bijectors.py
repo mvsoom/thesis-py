@@ -3,12 +3,6 @@ import tensorflow_probability.substrates.jax.bijectors as tfb
 
 from dgf import constants
 
-def period_bijector():
-    return bounded_exp_bijector(
-        constants.MIN_PERIOD_LENGTH_MSEC,
-        constants.MAX_PERIOD_LENGTH_MSEC
-    )
-
 # https://github.com/tensorflow/probability/issues/1523
 # Note: if this results in too much overhead, we could implement the `bounded_exp_bijector()`
 # from scratch with https://github.com/yonesuke/softclip. The implementation of this GitHub
@@ -44,3 +38,15 @@ def bounded_exp_bijector(low, high, eps = 1e-5, hinge_factor=0.01):
     # where `b = bounded_exp_bijector(low, high, hinge_factor)`.
     hinge_softness = hinge_factor * jnp.abs(low)
     return tfb.Chain([tfb.SoftClip(low, high, hinge_softness), tfb.Exp()])
+
+def period_bijector():
+    return bounded_exp_bijector(
+        constants.MIN_PERIOD_LENGTH_MSEC,
+        constants.MAX_PERIOD_LENGTH_MSEC
+    )
+
+def declination_time_bijector():
+    return bounded_exp_bijector(
+        constants.MIN_DECLINATION_TIME_MSEC,
+        constants.MAX_DECLINATION_TIME_MSEC
+    )
