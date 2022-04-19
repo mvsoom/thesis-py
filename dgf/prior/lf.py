@@ -1,28 +1,22 @@
-"""Define the prior over the LF model for the glottal flow derivative
-
-Sources are:
-    Perrotin (2021)
-    Doval (2006)
-    Fant (1994)
-
-Note that `Re` in Fant (1994) is called `Rd` in Perrotin (2021)!
-"""
-
+"""Define the prior over the LF model for the glottal flow derivative"""
+from init import __memory__
 from dgf.prior import lf
 from dgf.prior import period
+from dgf.prior import holmberg
+from dgf import constants
 from lib import lfmodel
-from init import __memory__
 
 import jax
+import jax.numpy as jnp
 import numpy as np
-
-_UNCONTAINED = np.inf
-def _contains(a, x):
-    return (a[0] < x) and (x < a[1])
 
 #########################
 # Sampling $p(R_k|R_e)$ #
 #########################
+_UNCONTAINED = np.inf
+def _contains(a, x):
+    return (a[0] < x) and (x < a[1])
+
 ALPHA_M_RANGE = np.array([0.55, 0.8]) # Common range; Drugman (2019), Table 1
 
 def estimate_sigma2_Rk(numsamples=10000, seed=5571):
@@ -109,9 +103,9 @@ RG_RANGE = np.array([
     (1 + RK_RANGE[1]) / (2*OQ_RANGE[0])
 ]) # From Rg = (1 + Rk)/(2*Oq)
 
-def sample_R_params(Re, rng):
+def sample_R_triple(Re, rng):
     """
-    From Perrotin (2021) Eq. (A1).
+    From Perrotin (2021) Eq. (A1). `Re` is typically in `[0.3, 2.7]`.
 
     See Fant (1994) for the meaning of these dimensionless parameters
     * Note that in that paper they are given in percent (%)
@@ -125,9 +119,13 @@ def sample_R_params(Re, rng):
         Rg = Rk*(0.5 + 1.2*Rk)/(0.44*Re - 4*Ra*(0.5 + 1.2*Rk)) # Uncertainty from Ra and Rk transfers to Rg
     return Ra, Rk, Rg
 
-###################################
-# Sampling XXXXX
-###################################
+#######################################
+# Sampling $p(R_a, R_k, R_g, R_e|T0)$ #
+#######################################
+def _collect_list_of_dicts(ld):
+    """Convert a list of dicts to a dict of lists"""
+    return {k: jnp.array([d[k] for d in ld]) for k in ld[0]}
+
 def calculate_Re(T0, Td):
     """
     We choose the declination time `T0 = U_0/E_e` as the independent variable
@@ -140,38 +138,75 @@ def calculate_Re(T0, Td):
     Re = Td * F0 / (0.11) # Fant (1994) Eq. (4)
     return Re
 
-def sample_consistent_lf_params(Ee, T0, rng):
+def sample_R_params(T0, Td, rng):
     p = dict()
-    p['Ee'] = Ee
     p['T0'] = T0
-    
-    # We choose the declination time `T0 = U_0/E_e` as the independent variable
-    # In this way we can induce correlations between T0 and all other variables, as
-    # empirically observed [@Henrich2005].
-    # The range is decided on the following:
-    # "The declination time is usually in [0.5 to 1 msec]" Fant (1994) p. 1451
-    Td = rng.uniform(0.25, 1.5) # msec # FIXME: better range
+    p['Td'] = Td
     p['Re'] = lf.calculate_Re(T0, Td)
-    
-    accept_sample = False
-    while not accept_sample:
-        p['Ra'], p['Rk'], p['Rg'] = lf.sample_R_params(p['Re'], rng)
-        p = lfmodel.convert_lf_params(p, 'R -> T')
-
-        accept_sample = lfmodel.consistent_lf_params(p)
-
+    p['Ra'], p['Rk'], p['Rg'] = lf.sample_R_triple(p['Re'], rng)
     return p
 
-#@__memory__.cache
-def sample_lf_params(numsamples=10000, seed=2387):
-    # We have to manage Numpy's and JAX RNGs
-    key, subkey = jax.random.split(jax.random.PRNGKey(seed))
-    rng_seed = int(jax.random.randint(subkey, (1,), minval=0, maxval=int(1e4)))
+_eps = 1e-3
+LF_GENERIC_BOUNDS = {
+    'power': [_eps, 10.],
+    'T0': [constants.MIN_PERIOD_LENGTH_MSEC, constants.MAX_PERIOD_LENGTH_MSEC],
+    'Oq': [constants.MIN_OQ, constants.MAX_OQ],
+    'am': [0.5, 1-_eps], # Theoretical (restricted) range; Doval (2006), p. 5
+    'Qa': [_eps, 1-_eps], # Theoretical range; Doval (2006), p. 5
+}
+
+@__memory__.cache
+def sample_lf_params(fs=10., numsamples=50000, seed=2387):
+    # Manage both Numpy and JAX RNGs
+    key1, key2, key3 = jax.random.split(jax.random.PRNGKey(seed), 3)
+    rng_seed = int(jax.random.randint(key1, (1,), minval=0, maxval=int(1e4)))
     rng = np.random.default_rng(rng_seed)
     
-    Ee = 1.
-    T0 = period.marginal_prior().sample(numsamples, seed=key)
-    list_of_dicts = [sample_consistent_lf_params(Ee, float(T), rng) for T in T0]
-    p = {k: np.array([d[k] for d in list_of_dicts]) for k in list_of_dicts[0]}
-    p = lfmodel.convert_lf_params(p, 'T -> generic')
+    # Sample pitch periods and declination times (both in msec)
+    T0 = period.marginal_prior().sample(numsamples, seed=key2)
+    Td = holmberg.declination_time_prior().sample(numsamples, seed=key3)
+    
+    # Sample the `R` parameters based on the pitch periods
+    p = _collect_list_of_dicts([sample_R_params(T, Td, rng) for T, Td in zip(T0, Td)])
+    
+    # Transform the `R` parameters to the equivalent `T` and generic representations
+    p['Ee'] = jnp.ones(numsamples)
+    p = lfmodel.convert_lf_params(p, 'R -> T')
+    p = lfmodel.convert_lf_params(p, 'R -> generic')
+    
+    # Calculate the power of the DGF waveform on the support `t`
+    T0_max = jnp.max(T0)
+    t = jnp.linspace(0., T0_max, int(T0_max*fs) + 1)
+    
+    dgf = jax.jit(lfmodel.dgf)
+    
+    @jax.jit
+    def calc_dgf_power(p):
+        u = dgf(t, p)
+        u = jnp.where(u, u, jnp.nan) # Ignore points outside of the pitch period
+        p['power'] = jnp.nanvar(u)
+        return p
+    
+    p = jax.vmap(calc_dgf_power)(p)
+    
+    # Remove all samples which have inconsistent LF parameters as signalled by
+    # their power being `nan`, as in `lfmodel.consistent_lf_params()`
+    mask = ~jnp.isnan(p['power'])
+    
+    # Remove all samples whose generic parameters are out of bounds
+    for k, bounds in LF_GENERIC_BOUNDS.items():
+        lower, upper = bounds
+        mask &= (lower < p[k]) & (p[k] < upper)
+    
+    p = {k: v[mask] for k, v in p.items()}
     return p
+
+#########################################################################
+# The priors based on the fitted empirical distributions in the z domain #
+#########################################################################
+def generic_params_prior(num_pitch_periods):
+    pass
+
+def dgf_prior(num_pitch_periods):
+    p = generic_params_prior(num_pitch_periods)
+    pass
