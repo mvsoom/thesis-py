@@ -48,7 +48,7 @@ def _bisect_a(T0, Te, Tp, epsilon, tol, initial_bracket, maxiter, **kwargs):
     # Assume that the bisection will only fail when `a -> 0`
     return _bisect_exponential_rate(f, tol, initial_bracket, maxiter, fail_val=0.)
 
-def _dgf(t, Ee, T0, Te, Tp, Ta, epsilon, a):
+def _dgf(t, Ee, T0, Te, Tp, Ta, epsilon, a, **kwargs):
     """Implement the LF model per Doval et al. (2006) Section A1.4."""
     @jax.jit
     def rise(t):
@@ -107,7 +107,7 @@ def consistent_lf_params(p):
     """Check whether the implicit LF equations can be solved given the LF parameters in `p`"""
     return ~jnp.any(jnp.isnan(dgf(0., p)))
 
-def convert_lf_params(p, s):
+def convert_lf_params(p, s, join=True):
     if s == 'R -> generic':
         # Perrotin et al. (2021) Eq. (A1)
         Ra, Rk, Rg = p['Ra'], p['Rk'], p['Rg']
@@ -150,7 +150,7 @@ def convert_lf_params(p, s):
         q = convert_lf_params(convert_lf_params(p, 'Rd -> R'), 'R -> T')
     else:
         raise ValueError(f'Unknown conversion: {s}')
-    return {**p, **q}
+    return {**p, **q} if join else q
 
 def fant_params(s):
     """Generate typical LF model parameters for a male or female vowel
