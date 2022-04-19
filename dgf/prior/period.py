@@ -17,6 +17,7 @@ import scipy.stats
 import time
 
 MIN_NUM_PERIODS = 3
+MAP_KERNEL = 'Matern32Kernel' # Kernel with highest evidence for APLAWD
 HILBERT_EXPANSION_ORDER = 32
 
 def load_recording_and_markers(recordings, markings, key):
@@ -256,9 +257,10 @@ def posterior_mean_point_estimate(results):
     del cov
     return np.squeeze(mu)
 
-def fit_aplawd():
+def fit_aplawd_z():
+    """Return the fit with highest evidence of APLAWD's period data transfored to the z-domain"""
     # Get posterior mean estimates of the 'true' pitch periods model with highest evidence
-    true_results = model_true_pitch_periods('Matern32Kernel', HILBERT_EXPANSION_ORDER)
+    true_results = model_true_pitch_periods(MAP_KERNEL, HILBERT_EXPANSION_ORDER)
     mean, sigma, scale, noise_sigma = posterior_mean_point_estimate(true_results)
     
     # Get posterior mean estimate of Praat observation error
@@ -266,23 +268,59 @@ def fit_aplawd():
     praat_sigma = posterior_mean_point_estimate(praat_results)
 
     return {
-        'period_mean_z': mean,
-        'period_var_z': sigma**2 + noise_sigma**2,
-        'period_praat_observation_var_z': praat_sigma**2,
-        'period_lengthscale_z': scale
+        'mean': mean,
+        'sigma': sigma,
+        'scale': scale,
+        'noise_sigma': noise_sigma,
+        'praat_sigma': praat_sigma
     }
 
-def marginal_period_prior():
-    fit = fit_aplawd()
-    normal_z = tfd.Normal(
-        loc=fit['period_mean_z'],
-        scale=np.sqrt(fit['period_var_z'])
-    )
+def trajectory_prior(num_pitch_periods=None, praat_estimate=None):
+    """A GP prior for pitch period trajectories based on the APLAWD database"""
+    fit_z = fit_aplawd_z()
+    bijector = bijectors.period_bijector()
     
+    if praat_estimate is not None:
+        if num_pitch_periods is not None:
+            assert num_pitch_periods == len(praat_estimate)
+        else:
+            num_pitch_periods = len(praat_estimate)
+        index_points = np.arange(num_pitch_periods).astype(float)[:,None]
+        observation_index_points = index_points
+        observations = bijector.inverse(praat_estimate)
+        observation_noise_variance = fit_z['noise_sigma']**2 + fit_z['praat_sigma']**2
+        predictive_noise_variance = 0.
+    else:
+        if num_pitch_periods is None:
+            num_pitch_periods = 1
+        index_points = np.arange(num_pitch_periods).astype(float)[:,None]
+        observation_index_points = None
+        observations = None
+        observation_noise_variance = fit_z['noise_sigma']**2
+        predictive_noise_variance = 0.
+
+    map_kernel = isokernels.resolve(MAP_KERNEL)(
+        fit_z['sigma']**2, fit_z['scale']
+    )
+    mean_fn = lambda _: np.array([fit_z['mean']])
+
+    gp = tfd.GaussianProcessRegressionModel(
+        map_kernel,
+        index_points=index_points,
+        observation_index_points=observation_index_points,
+        observations=observations,
+        observation_noise_variance=observation_noise_variance,
+        predictive_noise_variance=predictive_noise_variance,
+        mean_fn=mean_fn
+    )
+
     prior = tfd.TransformedDistribution(
-      distribution=normal_z,
-      bijector=bijectors.period_bijector(),
-      name='MarginalPeriodDistribution'
+        distribution=gp,
+        bijector=bijector,
+        name='PeriodTrajectoryPrior'
     )
     
     return prior
+
+def marginal_prior():
+    return trajectory_prior(num_pitch_periods=1)
