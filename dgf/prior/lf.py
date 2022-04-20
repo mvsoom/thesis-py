@@ -4,11 +4,16 @@ from dgf.prior import lf
 from dgf.prior import period
 from dgf.prior import holmberg
 from dgf import constants
+from dgf import bijectors
+from dgf import isokernels
 from lib import lfmodel
 
 import jax
 import jax.numpy as jnp
+import tensorflow_probability.substrates.jax.distributions as tfd
+
 import numpy as np
+import warnings
 
 #########################
 # Sampling $p(R_k|R_e)$ #
@@ -146,17 +151,9 @@ def sample_R_params(T0, Td, rng):
     p['Ra'], p['Rk'], p['Rg'] = lf.sample_R_triple(p['Re'], rng)
     return p
 
-_eps = 1e-3
-LF_GENERIC_BOUNDS = {
-    'power': [_eps, 10.],
-    'T0': [constants.MIN_PERIOD_LENGTH_MSEC, constants.MAX_PERIOD_LENGTH_MSEC],
-    'Oq': [constants.MIN_OQ, constants.MAX_OQ],
-    'am': [0.5, 1-_eps], # Theoretical (restricted) range; Doval (2006), p. 5
-    'Qa': [_eps, 1-_eps], # Theoretical range; Doval (2006), p. 5
-}
-
 @__memory__.cache
-def sample_lf_params(fs=10., numsamples=50000, seed=2387):
+def sample_lf_params(fs=10., numsamples=1000, seed=2387):
+    """Sample the `R`, `T` and `generic` parameters of the LF model"""
     # Manage both Numpy and JAX RNGs
     key1, key2, key3 = jax.random.split(jax.random.PRNGKey(seed), 3)
     rng_seed = int(jax.random.randint(key1, (1,), minval=0, maxval=int(1e4)))
@@ -170,7 +167,6 @@ def sample_lf_params(fs=10., numsamples=50000, seed=2387):
     p = _collect_list_of_dicts([sample_R_params(T, Td, rng) for T, Td in zip(T0, Td)])
     
     # Transform the `R` parameters to the equivalent `T` and generic representations
-    p['Ee'] = jnp.ones(numsamples)
     p = lfmodel.convert_lf_params(p, 'R -> T')
     p = lfmodel.convert_lf_params(p, 'R -> generic')
     
@@ -193,20 +189,132 @@ def sample_lf_params(fs=10., numsamples=50000, seed=2387):
     # their power being `nan`, as in `lfmodel.consistent_lf_params()`
     mask = ~jnp.isnan(p['power'])
     
-    # Remove all samples whose generic parameters are out of bounds
-    for k, bounds in LF_GENERIC_BOUNDS.items():
+    # Remove all samples whose *generic* parameters are out of bounds
+    for k, bounds in constants.LF_GENERIC_BOUNDS.items():
         lower, upper = bounds
         mask &= (lower < p[k]) & (p[k] < upper)
     
     p = {k: v[mask] for k, v in p.items()}
     return p
 
-#########################################################################
-# The priors based on the fitted empirical distributions in the z domain #
-#########################################################################
-def generic_params_prior(num_pitch_periods):
-    pass
+def fit_lf_generic_z():
+    # Select the `generic` parameters from the collection of LF parameters in `p`
+    p = sample_lf_params()
+    samples = np.vstack([p[v] for v in constants.LF_GENERIC_PARAMS]).T
 
-def dgf_prior(num_pitch_periods):
-    p = generic_params_prior(num_pitch_periods)
-    pass
+    # Transform to z domain
+    z = bijectors.lf_generic_params_bijector().inverse(samples)
+    assert not np.any(np.isnan(z)) # Bounds are already forced during sampling
+
+    # Fit a Gaussian in the z domain
+    generic_mean_z = np.mean(z, axis=0)
+    generic_cov_z = np.cov(z.T)
+    return generic_mean_z, generic_cov_z
+
+################################################################################
+# Finally, define the priors based on the fitted distributions in the z domain #
+################################################################################
+def _multivariate_tril_kron(num_pitch_periods, marginal_mean, marginal_K, envelope_K):
+    """Implement a multivariate normal with Kronecker-structured covariance matrix"""
+    mean_trajectory = np.kron(marginal_mean, np.ones(num_pitch_periods))
+
+    def stabilize(A):
+        n = A.shape[0]
+        return A + np.eye(n)*n*np.finfo(float).eps
+
+    marginal_L = np.linalg.cholesky(stabilize(marginal_K))
+    envelope_L = np.linalg.cholesky(stabilize(envelope_K))
+    cov_cholesky_trajectory = np.kron(marginal_L, envelope_L)
+    return mean_trajectory, cov_cholesky_trajectory
+
+def _stabilize(A):
+    n = A.shape[0]
+    return A + np.eye(n)*n*np.finfo(float).eps
+
+def generic_params_trajectory_prior(
+    num_pitch_periods,
+    envelope_kernel_name=None,
+    envelope_lengthscale=None
+):
+    # Get the marginal (cross-sectional) means and correlations
+    marginal_mean, marginal_K = fit_lf_generic_z()
+
+    # Get the envelope (longitudinal) correlations
+    envelope_variance = 1.
+    if envelope_kernel_name is None:
+        envelope_kernel_name = period.MAP_KERNEL
+    if envelope_lengthscale is None:
+        envelope_lengthscale = period.fit_aplawd_z()['scale']
+    
+    envelope_kernel = isokernels.resolve(envelope_kernel_name)(
+        envelope_variance, envelope_lengthscale
+    )
+
+    index_points = np.arange(num_pitch_periods).astype(float)[:,None]
+    envelope_K = envelope_kernel.matrix(index_points, index_points)
+
+    # Construct the multivariate normal describing the trajectories in the z domain
+    mean_trajectory, cov_cholesky_trajectory = _multivariate_tril_kron(
+        num_pitch_periods, marginal_mean, marginal_K, envelope_K
+    )
+    
+    z_trajectory = tfd.MultivariateNormalTriL(
+        loc=mean_trajectory, scale_tril=cov_cholesky_trajectory
+    )
+    
+    prior = tfd.TransformedDistribution(
+        distribution=z_trajectory,
+        bijector=bijectors.lf_generic_params_trajectory_bijector(num_pitch_periods),
+        name='GenericParamsTrajectoryPrior'
+    )
+    
+    return prior # `prior.sample()` has shape (num_pitch_periods, 5)
+
+def generic_params_marginal_prior():
+    """Faster and leaner version of `generic_params_trajectory_prior(1)`"""
+    marginal_mean, marginal_K = fit_lf_generic_z()
+    
+    prior = tfd.TransformedDistribution(
+        distribution=tfd.MultivariateNormalFullCovariance(marginal_mean, marginal_K),
+        bijector=bijectors.lf_generic_params_bijector(),
+        name='GenericParamsMarginalPrior'
+    )
+    
+    return prior
+
+def generic_params_to_dict(x):
+    x = jnp.atleast_2d(x)
+    p = {k: jnp.squeeze(x[:, i]) for i, k in enumerate(constants.LF_GENERIC_PARAMS)}
+    return p
+
+def sample_dgf(
+    num_pitch_periods,
+    prior,
+    fs=10.,
+    return_logprob=False,
+    seed=4812
+):  
+    x = prior.sample(seed=jax.random.PRNGKey(seed))
+    logprob = prior.log_prob(x)
+    
+    p = generic_params_to_dict(x)
+    p = lfmodel.convert_lf_params(p, 'generic -> T')
+
+    GOI = jnp.cumsum(p['T0']) - p['T0'][0]
+    end = GOI[-1] + p['T0'][-1]
+    t = np.linspace(0, end, int(end*fs))
+    
+    def warn_if_nans(u):
+        mask = jnp.any(jnp.isnan(u), axis=1)
+        if jnp.sum(mask) > 0:
+            pitch_period_indices = jnp.where(mask)[0]
+            warnings.warn(
+                'Inconsistent LF parameters detected at the following pitch '
+                f'period indices: {pitch_period_indices}'
+            )
+
+    u = jax.vmap(jax.jit(lfmodel.dgf), in_axes=[None, 0, 0])(t, p, GOI)
+    warn_if_nans(u)
+    u = jnp.nansum(u, axis=0)
+
+    return (logprob, t, u) if return_logprob else (t, u)

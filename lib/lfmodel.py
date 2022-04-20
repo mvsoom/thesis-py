@@ -48,15 +48,15 @@ def _bisect_a(T0, Te, Tp, epsilon, tol, initial_bracket, maxiter, **kwargs):
     # Assume that the bisection will only fail when `a -> 0`
     return _bisect_exponential_rate(f, tol, initial_bracket, maxiter, fail_val=0.)
 
-def _dgf(t, Ee, T0, Te, Tp, Ta, epsilon, a, **kwargs):
+def _dgf(t, T0, Te, Tp, Ta, epsilon, a, **kwargs):
     """Implement the LF model per Doval et al. (2006) Section A1.4."""
     @jax.jit
     def rise(t):
-        return -Ee*jnp.exp(a*(t - Te))*jnp.sin(jnp.pi*t/Tp)/jnp.sin(jnp.pi*Te/Tp)
+        return -jnp.exp(a*(t - Te))*jnp.sin(jnp.pi*t/Tp)/jnp.sin(jnp.pi*Te/Tp)
 
     @jax.jit
     def decrease(t):
-        return -Ee/(epsilon*Ta)*(jnp.exp(-epsilon*(t - Te)) - jnp.exp(-epsilon*(T0 - Te)))
+        return -1/(epsilon*Ta)*(jnp.exp(-epsilon*(t - Te)) - jnp.exp(-epsilon*(T0 - Te)))
 
     return jnp.piecewise(
         t,
@@ -77,7 +77,7 @@ def dgf(t, p, offset=0., tol=1e-6, initial_bracket=None, maxiter=100):
     Args:
         `t` (array): Time points at which to evaluate the DGF `u(t)`
         `p` (dict): Dictionary with the LF parameters. It must have the following keys:
-            `['Ee', 'T0', 'Te', 'Tp', 'Ta']`.
+            `['T0', 'Te', 'Tp', 'Ta']`. `Ee` is always assumed to be 1.
         `offset` (scalar): The DGF waveform starts at this offset and is nonzero in
             `[offset, offset + T0]`.
         `tol`, `initial_bracket`, `maxiter` (scalar): Parameters controlling the bisection
@@ -162,7 +162,6 @@ def fant_params(s):
     """
     if s == "female vowel":
         return {
-            'Ee': 1.0,
             'T0': 5.0,
             'Te': 3.25,
             'Tp': 2.5,
@@ -170,7 +169,6 @@ def fant_params(s):
         }
     elif s == "male vowel":
         return {
-            'Ee': 1.0,
             'T0': 8.333333333333334,
             'Te': 4.51388888888889,
             'Tp': 3.4722222222222228,
