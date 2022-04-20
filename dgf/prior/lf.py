@@ -227,10 +227,6 @@ def _multivariate_tril_kron(num_pitch_periods, marginal_mean, marginal_K, envelo
     cov_cholesky_trajectory = np.kron(marginal_L, envelope_L)
     return mean_trajectory, cov_cholesky_trajectory
 
-def _stabilize(A):
-    n = A.shape[0]
-    return A + np.eye(n)*n*np.finfo(float).eps
-
 def generic_params_trajectory_prior(
     num_pitch_periods,
     envelope_kernel_name=None,
@@ -284,7 +280,7 @@ def generic_params_marginal_prior():
 
 def generic_params_to_dict(x):
     x = jnp.atleast_2d(x)
-    p = {k: jnp.squeeze(x[:, i]) for i, k in enumerate(constants.LF_GENERIC_PARAMS)}
+    p = {k: x[:, i] for i, k in enumerate(constants.LF_GENERIC_PARAMS)}
     return p
 
 def sample_dgf(
