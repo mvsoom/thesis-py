@@ -278,9 +278,11 @@ def generic_params_marginal_prior():
     
     return prior
 
-def generic_params_to_dict(x):
+def generic_params_to_dict(x, squeeze=False):
     x = jnp.atleast_2d(x)
     p = {k: x[:, i] for i, k in enumerate(constants.LF_GENERIC_PARAMS)}
+    if squeeze:
+        p = {k: jnp.squeeze(v) for k, v in p.items()}
     return p
 
 def sample_dgf(
