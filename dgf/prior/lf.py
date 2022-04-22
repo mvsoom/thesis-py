@@ -22,13 +22,13 @@ _UNCONTAINED = np.inf
 def _contains(a, x):
     return (a[0] < x) and (x < a[1])
 
-ALPHA_M_RANGE = np.array([0.55, 0.8]) # Common range; Drugman (2019), Table 1
+AM_BOUNDS = [constants.MIN_AM, constants.MAX_AM]
 
 def estimate_sigma2_Rk(numsamples=10000, seed=5571):
     """
     Estimate the variance of Rk from the known theoretical range of $\alpha_m$.
     """
-    alpha_m = np.random.default_rng(seed).uniform(*ALPHA_M_RANGE, size=numsamples)
+    alpha_m = np.random.default_rng(seed).uniform(*AM_BOUNDS, size=numsamples)
     Rk = 1/alpha_m - 1 # Perrotin (2021) Eq. (A1)
     return np.var(Rk)
 
@@ -47,7 +47,7 @@ def estimate_Rk_stddev():
     return Rk_stddev
 
 RK_STDDEV = estimate_Rk_stddev()
-RK_RANGE = np.array([0., 1.]) # Is a percentage
+RK_BOUNDS = np.array([0., 1.]) # Is a percentage
 
 def sample_Rk(Re, rng):
     """
@@ -55,22 +55,22 @@ def sample_Rk(Re, rng):
     given `r = 0.93` value and the estimated standard deviation of Rk.
     """
     Rk = _UNCONTAINED
-    while not _contains(RK_RANGE, Rk): Rk = (22.4 + 11.8*Re)/100 + RK_STDDEV*rng.normal()
+    while not _contains(RK_BOUNDS, Rk): Rk = (22.4 + 11.8*Re)/100 + RK_STDDEV*rng.normal()
     return Rk
 
 #########################
 # Sampling $p(R_a|R_e)$ #
 #########################
-OQ_RANGE = np.array([0.3, 0.9]) # Common range; Drugman (2019), Table 1
-QA_RANGE = np.array([0., 1.0]) # Theoretical range; Doval (2006), p. 5
+OQ_BOUNDS = [constants.MIN_OQ, constants.MAX_OQ]
+QA_BOUNDS = [constants.MIN_QA, constants.MAX_QA]
 
 def estimate_sigma2_Ra(numsamples=10000, seed=6236):
     """
     Estimate the variance of Ra from the known theoretical range of OQ and Qa.
     """
     rng = np.random.default_rng(seed)
-    Oq = rng.uniform(*OQ_RANGE, numsamples) # @Drugman2019, Table 1
-    Qa = rng.uniform(*QA_RANGE, numsamples) # Doval (2006), p. 5
+    Oq = rng.uniform(*OQ_BOUNDS, numsamples) # @Drugman2019, Table 1
+    Qa = rng.uniform(*QA_BOUNDS, numsamples) # Doval (2006), p. 5
     Ra = (1 - Oq)*Qa
     return np.var(Ra)
 
@@ -87,7 +87,7 @@ def estimate_Ra_stddev():
     return Ra_stddev
 
 RA_STDDEV = estimate_Ra_stddev()
-RA_RANGE = np.array([0., 1.]) # Is a percentage
+RA_BOUNDS = [0., 1.] # Is a percentage
 
 def sample_Ra(Re, rng):
     """
@@ -97,15 +97,15 @@ def sample_Ra(Re, rng):
     Note that `Re` in Fant (1994) is called `Rd` in Perrotin (2021)!
     """
     Ra = _UNCONTAINED
-    while not _contains(RA_RANGE, Ra): Ra = (-1 + 4.8*Re)/100 + RA_STDDEV*rng.normal()
+    while not _contains(RA_BOUNDS, Ra): Ra = (-1 + 4.8*Re)/100 + RA_STDDEV*rng.normal()
     return Ra
 
 ###################################
 # Sampling $p(R_a, R_k, R_g|R_e)$ #
 ###################################
-RG_RANGE = np.array([
-    (1 + RK_RANGE[0]) / (2*OQ_RANGE[1]),
-    (1 + RK_RANGE[1]) / (2*OQ_RANGE[0])
+RG_BOUNDS = np.array([
+    (1 + RK_BOUNDS[0]) / (2*OQ_BOUNDS[1]),
+    (1 + RK_BOUNDS[1]) / (2*OQ_BOUNDS[0])
 ]) # From Rg = (1 + Rk)/(2*Oq)
 
 def sample_R_triple(Re, rng):
@@ -118,7 +118,7 @@ def sample_R_triple(Re, rng):
     * Note that `Rg` can be larger than 1, unlike `Ra `and `Rg` (Fant 1994, Fig. 3)
     """
     Rg = _UNCONTAINED
-    while not _contains(RG_RANGE, Rg):
+    while not _contains(RG_BOUNDS, Rg):
         Ra = sample_Ra(Re, rng)
         Rk = sample_Rk(Re, rng)
         Rg = Rk*(0.5 + 1.2*Rk)/(0.44*Re - 4*Ra*(0.5 + 1.2*Rk)) # Uncertainty from Ra and Rk transfers to Rg
