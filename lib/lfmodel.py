@@ -8,7 +8,7 @@ def _get_initial_bracket(T0, tol, UPPER_FACTOR=1e3):
     upper = (1/T0)*UPPER_FACTOR
     return lower, upper
 
-def _bisect_exponential_rate(f, tol, initial_bracket, maxiter, fail_val=jnp.nan):
+def _bisect_exponential_rate(f, tol, initial_bracket, maxiter, fail_val=jnp.nan, **kwargs):
     lower, upper = initial_bracket
     bisec = jaxopt.Bisection(
         optimality_fun=f,
@@ -18,49 +18,47 @@ def _bisect_exponential_rate(f, tol, initial_bracket, maxiter, fail_val=jnp.nan)
         tol=tol,
         check_bracket=False
     )
-    result = bisec.run()
+    result = bisec.run(**kwargs)
     success = result.state.error < tol
     exponential_rate = result.params
     return jax.lax.cond(success, lambda: exponential_rate, lambda: fail_val)
 
-def _bisect_epsilon(T0, Te, Ta, tol, initial_bracket, maxiter, **kwargs):
-    @jax.jit
-    def f(epsilon):
-        LHS = epsilon*Ta
-        RHS = 1 - jnp.exp(-epsilon*(T0 - Te))
+def _bisect_epsilon(p, tol, initial_bracket, maxiter):
+    def f(epsilon, p):
+        LHS = epsilon*p['Ta']
+        RHS = 1 - jnp.exp(-epsilon*(p['T0'] - p['Te']))
         return LHS - RHS
 
-    return _bisect_exponential_rate(f, tol, initial_bracket, maxiter)
+    return _bisect_exponential_rate(f, tol, initial_bracket, maxiter, p=p)
 
-def _bisect_a(T0, Te, Tp, epsilon, tol, initial_bracket, maxiter, **kwargs):
-    @jax.jit
-    def f(a):
-        factor = 1/(a**2 + (jnp.pi/Tp)**2)
-        term1 = jnp.exp(-a*Te)*(jnp.pi/Tp)/jnp.sin(jnp.pi*Te/Tp)
+def _bisect_a(p, epsilon, tol, initial_bracket, maxiter):
+    def f(a, p, epsilon):
+        factor = 1/(a**2 + (jnp.pi/p['Tp'])**2)
+        term1 = jnp.exp(-a*p['Te'])*(jnp.pi/p['Tp'])/jnp.sin(jnp.pi*p['Te']/p['Tp'])
         term2 = a
-        term3 = jnp.pi/Tp*(1/jnp.tan(jnp.pi*Te/Tp)) # cotg() is 1/tan()
+        term3 = jnp.pi/p['Tp']*(1/jnp.tan(jnp.pi*p['Te']/p['Tp'])) # cotg() is 1/tan()
         LHS = factor*(term1 + term2 - term3)
 
-        RHS = (T0 - Te)/(jnp.exp(epsilon*(T0 - Te)) - 1) - 1/epsilon
+        RHS = (p['T0'] - p['Te'])/(jnp.exp(epsilon*(p['T0'] - p['Te'])) - 1) - 1/epsilon
 
         return LHS - RHS
 
     # Assume that the bisection will only fail when `a -> 0`
-    return _bisect_exponential_rate(f, tol, initial_bracket, maxiter, fail_val=0.)
+    return _bisect_exponential_rate(
+        f, tol, initial_bracket, maxiter, fail_val=0., p=p, epsilon=epsilon
+    )
 
-def _dgf(t, T0, Te, Tp, Ta, epsilon, a, **kwargs):
+def _dgf(t, p, epsilon, a, **kwargs):
     """Implement the LF model per Doval et al. (2006) Section A1.4."""
-    @jax.jit
     def rise(t):
-        return -jnp.exp(a*(t - Te))*jnp.sin(jnp.pi*t/Tp)/jnp.sin(jnp.pi*Te/Tp)
+        return -jnp.exp(a*(t - p['Te']))*jnp.sin(jnp.pi*t/p['Tp'])/jnp.sin(jnp.pi*p['Te']/p['Tp'])
 
-    @jax.jit
     def decrease(t):
-        return -1/(epsilon*Ta)*(jnp.exp(-epsilon*(t - Te)) - jnp.exp(-epsilon*(T0 - Te)))
+        return -1/(epsilon*p['Ta'])*(jnp.exp(-epsilon*(t - p['Te'])) - jnp.exp(-epsilon*(p['T0'] - p['Te'])))
 
     return jnp.piecewise(
         t,
-        [t < 0, (0 <= t) & (t < Te), (Te <= t) & (t <= T0)],
+        [t < 0, (0 <= t) & (t < p['Te']), (p['Te'] <= t) & (t <= p['T0'])],
         [0., rise, decrease, 0.]
     )
 
@@ -69,6 +67,9 @@ def _nans_like(a):
 
 def dgf(t, p, offset=0., tol=1e-6, initial_bracket=None, maxiter=100):
     """Calculate the glottal flow derivative (DGF) using the LF (Liljencrants-Fant) model
+    
+    This JAX implementation can be jitted and is differentiable with respect to `p`.
+    Jitting this function will gain several a speedup of several orders of magnitude.
     
     The LF model [1,2] is nonzero only for values of `t` in `[offset, offset + T0]`, where
     `T0 = p['T0']`. If the LF parameters in `p` are inconsistent, such that the
@@ -97,9 +98,9 @@ def dgf(t, p, offset=0., tol=1e-6, initial_bracket=None, maxiter=100):
     if initial_bracket is None:
         initial_bracket = _get_initial_bracket(p['T0'], tol)
 
-    epsilon = _bisect_epsilon(**p, tol=tol, initial_bracket=initial_bracket, maxiter=maxiter)
-    a = _bisect_a(**p, epsilon=epsilon, tol=tol, initial_bracket=initial_bracket, maxiter=maxiter)
-    u = _dgf(t - offset, **p, epsilon=epsilon, a=a)
+    epsilon = _bisect_epsilon(p, tol=tol, initial_bracket=initial_bracket, maxiter=maxiter)
+    a = _bisect_a(p, epsilon=epsilon, tol=tol, initial_bracket=initial_bracket, maxiter=maxiter)
+    u = _dgf(t - offset, p=p, epsilon=epsilon, a=a)
     inconsistent_parameters = jnp.any(jnp.isnan(u))
     return jax.lax.cond(inconsistent_parameters, lambda: _nans_like(u), lambda: u)
 
