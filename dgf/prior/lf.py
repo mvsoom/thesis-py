@@ -20,7 +20,7 @@ import warnings
 #########################
 _UNCONTAINED = np.inf
 def _contains(a, x):
-    return (a[0] < x) and (x < a[1])
+    return (a[0] < x) & (x < a[1])
 
 AM_BOUNDS = [constants.MIN_AM, constants.MAX_AM]
 
@@ -47,7 +47,7 @@ def estimate_Rk_stddev():
     return Rk_stddev
 
 RK_STDDEV = estimate_Rk_stddev()
-RK_BOUNDS = np.array([0., 1.]) # Is a percentage
+RK_BOUNDS = [constants._ZERO, 1.] # Is a percentage
 
 def sample_Rk(Re, rng):
     """
@@ -87,14 +87,14 @@ def estimate_Ra_stddev():
     return Ra_stddev
 
 RA_STDDEV = estimate_Ra_stddev()
-RA_BOUNDS = [0., 1.] # Is a percentage
+RA_BOUNDS = [constants._ZERO, 1.] # Is a percentage
 
 def sample_Ra(Re, rng):
     """
     Use the regression in Fant (1994) Eq. (3) + reverse-engineered noise based on the
     given `r = 0.91` value and the estimated standard deviation of Ra.
     
-    Note that `Re` in Fant (1994) is called `Rd` in Perrotin (2021)!
+    Note that `Re` in Fant (1994) is called `Rd` in Fant (1995) and Perrotin (2021).
     """
     Ra = _UNCONTAINED
     while not _contains(RA_BOUNDS, Ra): Ra = (-1 + 4.8*Re)/100 + RA_STDDEV*rng.normal()
@@ -108,36 +108,41 @@ RG_BOUNDS = np.array([
     (1 + RK_BOUNDS[1]) / (2*OQ_BOUNDS[0])
 ]) # From Rg = (1 + Rk)/(2*Oq)
 
+RE_BOUNDS = [0.3, 2.7] # Main range of variation (Fant 1995)
+
 def sample_R_triple(Re, rng):
     """
-    From Perrotin (2021) Eq. (A1). `Re` is typically in `[0.3, 2.7]`.
+    From Perrotin (2021) Eq. (A1). Regress the other `R` parameters given `Re`.
+
+    We use the equations that assume that `Re` is in `[0.3, 2.7]`, the main range
+    of variation. The upper range `Re in [2.7, 5]` is "intended for transitions towards
+    complete abduction as in prepause voice terminations" (Fant 1995, p. 123).
 
     See Fant (1994) for the meaning of these dimensionless parameters
     * Note that in that paper they are given in percent (%)
-    * Note that `Re` in Fant (1994) is called `Rd` in Perrotin (2021).
+    * Note that `Re` in Fant (1994) is called `Rd` in Fant (1995) and Perrotin (2021).
     * Note that `Rg` can be larger than 1, unlike `Ra `and `Rg` (Fant 1994, Fig. 3)
     """
-    Rg = _UNCONTAINED
-    while not _contains(RG_BOUNDS, Rg):
-        Ra = sample_Ra(Re, rng)
-        Rk = sample_Rk(Re, rng)
-        Rg = Rk*(0.5 + 1.2*Rk)/(0.44*Re - 4*Ra*(0.5 + 1.2*Rk)) # Uncertainty from Ra and Rk transfers to Rg
+    if not _contains(RE_BOUNDS, Re):
+        Ra, Rk, Rg = np.nan, np.nan, np.nan
+    else:
+        Rg = _UNCONTAINED
+        while not _contains(RG_BOUNDS, Rg):
+            Ra = sample_Ra(Re, rng)
+            Rk = sample_Rk(Re, rng)
+            Rg = Rk*(0.5 + 1.2*Rk)/(0.44*Re - 4*Ra*(0.5 + 1.2*Rk)) # Uncertainty from Ra and Rk transfers to Rg
     return Ra, Rk, Rg
 
 #######################################
 # Sampling $p(R_a, R_k, R_g, R_e|T0)$ #
 #######################################
-def _collect_list_of_dicts(ld):
-    """Convert a list of dicts to a dict of lists"""
-    return {k: jnp.array([d[k] for d in ld]) for k in ld[0]}
-
 def calculate_Re(T0, Td):
     """
     We choose the declination time `T0 = U_0/E_e` as the independent variable
     In this way we can induce correlations between T0 and all other variables, as
     empirically observed (Henrich 2005).
     
-    Note that `Re` in Fant (1994) is called `Rd` in Perrotin (2021).
+    Note that `Re` in Fant (1994) is called `Rd` in Fant (1995) and Perrotin (2021).
     """
     F0 = 1/T0 # kHz
     Re = Td * F0 / (0.11) # Fant (1994) Eq. (4)
@@ -151,9 +156,22 @@ def sample_R_params(T0, Td, rng):
     p['Ra'], p['Rk'], p['Rg'] = lf.sample_R_triple(p['Re'], rng)
     return p
 
+def _collect_list_of_dicts(ld):
+    """Convert a list of dicts to a dict of lists"""
+    return {k: jnp.array([d[k] for d in ld]) for k in ld[0]}
+
+def _apply_mask(p, mask):
+    p = {k: v[mask] for k, v in p.items()}
+    return p
+
 @__memory__.cache
-def sample_lf_params(fs=10., numsamples=1000, seed=2387):
-    """Sample the `R`, `T` and `generic` parameters of the LF model"""
+def sample_lf_params(fs=10., numsamples=int(1e5), seed=2387):
+    """Sample the `R`, `T` and `generic` parameters of the LF model
+    
+    This will return less samples than `numsamples`, because we emply rejection
+    sampling. The regression equations are valid only for a certain range of `Re`
+    (the `RE_BOUNDS`) and we impose bounds on all `R` and `generic` parameters.
+    """
     # Manage both Numpy and JAX RNGs
     key1, key2, key3 = jax.random.split(jax.random.PRNGKey(seed), 3)
     rng_seed = int(jax.random.randint(key1, (1,), minval=0, maxval=int(1e4)))
@@ -165,6 +183,10 @@ def sample_lf_params(fs=10., numsamples=1000, seed=2387):
     
     # Sample the `R` parameters based on the pitch periods
     p = _collect_list_of_dicts([sample_R_params(T, Td, rng) for T, Td in zip(T0, Td)])
+    
+    # Reject samples with out-of-bounds `Re` values
+    mask = _contains(RE_BOUNDS, p['Re'])
+    p = _apply_mask(p, mask)
     
     # Transform the `R` parameters to the equivalent `T` and generic representations
     p = lfmodel.convert_lf_params(p, 'R -> T')
@@ -185,16 +207,16 @@ def sample_lf_params(fs=10., numsamples=1000, seed=2387):
     
     p = jax.vmap(calc_dgf_power)(p)
     
-    # Remove all samples which have inconsistent LF parameters as signalled by
-    # their power being `nan`, as in `lfmodel.consistent_lf_params()`
+    # Reject all samples which have inconsistent LF parameters as signalled by
+    # their power being `nan`, as in `lfmodel.consistent_lf_params()` ...
     mask = ~jnp.isnan(p['power'])
     
-    # Remove all samples whose *generic* parameters are out of bounds
+    # ... and all samples whose *generic* parameters are out of bounds
     for k, bounds in constants.LF_GENERIC_BOUNDS.items():
         lower, upper = bounds
         mask &= (lower < p[k]) & (p[k] < upper)
     
-    p = {k: v[mask] for k, v in p.items()}
+    p = _apply_mask(p, mask)
     return p
 
 def fit_lf_generic_z():
@@ -264,7 +286,7 @@ def generic_params_trajectory_prior(
         name='GenericParamsTrajectoryPrior'
     )
     
-    return prior # `prior.sample()` has shape (num_pitch_periods, 5)
+    return prior # `prior.sample()` has shape (num_pitch_periods, len(constants.LF_GENERIC_PARAMS))
 
 def generic_params_marginal_prior():
     """Faster and leaner version of `generic_params_trajectory_prior(1)`"""
