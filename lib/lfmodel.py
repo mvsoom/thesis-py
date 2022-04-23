@@ -108,6 +108,9 @@ def consistent_lf_params(p):
     """Check whether the implicit LF equations can be solved given the LF parameters in `p`"""
     return ~jnp.any(jnp.isnan(dgf(0., p)))
 
+def _select_keys(q, *keys):
+    return {k: q[k] for k in keys if k in q}
+
 def convert_lf_params(p, s, join=True):
     if s == 'R -> generic':
         # Perrotin et al. (2021) Eq. (A1)
@@ -137,8 +140,10 @@ def convert_lf_params(p, s, join=True):
         q = dict(Te=Te, Tp=Tp, Ta=Ta)
     elif s == 'generic -> T':
         q = convert_lf_params(convert_lf_params(p, 'generic -> R'), 'R -> T')
+        q = _select_keys(q, 'Te', 'Tp', 'Ta')
     elif s == 'T -> generic':
         q = convert_lf_params(convert_lf_params(p, 'T -> R'), 'R -> generic')
+        q = _select_keys(q, 'Oq', 'am', 'Qa')
     elif s == 'Rd -> R':
         # Perrotin et al. (2021) Eq. (A1)
         # See also Fant (1994) for the meaning of these dimensionless parameters
@@ -149,6 +154,7 @@ def convert_lf_params(p, s, join=True):
         q = dict(Ra=Ra, Rk=Rk, Rg=Rg)
     elif s == 'Rd -> T':
         q = convert_lf_params(convert_lf_params(p, 'Rd -> R'), 'R -> T')
+        q = _select_keys(q, 'Te', 'Tp', 'Ta')
     else:
         raise ValueError(f'Unknown conversion: {s}')
     return {**p, **q} if join else q
