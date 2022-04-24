@@ -20,6 +20,9 @@ MIN_NUM_PERIODS = 3
 MAP_KERNEL = 'Matern32Kernel' # Kernel with highest evidence for APLAWD
 HILBERT_EXPANSION_ORDER = 32
 
+SAMPLERARGS = {'nlive': 100, 'bound': 'multi', 'sample': 'rslice', 'bootstrap': 10}
+RUNARGS = {'save_bounds': False}
+
 def load_recording_and_markers(recordings, markings, key):
     k = recordings.load_shifted(key)
     try:
@@ -161,9 +164,9 @@ def get_aplawd_training_pairs():
 def model_true_pitch_periods(
     kernel_name,
     kernel_M,
-    seed = 7498,
-    samplerargs = {'nlive': 100},
-    runargs = {'save_bounds': False}
+    seed=7498,
+    samplerargs=SAMPLERARGS,
+    runargs=RUNARGS
 ):
     """
     Model the 'true' APLAWD pitch periods transformd to the z domain by a standard Hilbert GP
@@ -211,9 +214,9 @@ def model_true_pitch_periods(
 
 @__memory__.cache
 def model_praat_pitch_periods(
-    seed = 3176,
-    samplerargs = {'nlive': 100},
-    runargs = {'save_bounds': False}
+    seed=3176,
+    samplerargs=SAMPLERARGS,
+    runargs=RUNARGS
 ):
     """
     Model the pitch periods as estimated by Praat as the 'true' APLAWD pitch periods
