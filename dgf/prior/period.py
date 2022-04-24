@@ -163,7 +163,7 @@ def get_aplawd_training_pairs():
 @__memory__.cache
 def model_true_pitch_periods(
     kernel_name,
-    kernel_M,
+    kernel_M=HILBERT_EXPANSION_ORDER,
     seed=7498,
     samplerargs=SAMPLERARGS,
     runargs=RUNARGS
@@ -263,7 +263,7 @@ def posterior_mean_point_estimate(results):
 def fit_aplawd_z():
     """Return the fit with highest evidence of APLAWD's period data transfored to the z-domain"""
     # Get posterior mean estimates of the 'true' pitch periods model with highest evidence
-    true_results = model_true_pitch_periods(MAP_KERNEL, HILBERT_EXPANSION_ORDER)
+    true_results = model_true_pitch_periods(MAP_KERNEL)
     mean, sigma, scale, noise_sigma = posterior_mean_point_estimate(true_results)
     
     # Get posterior mean estimate of Praat observation error
