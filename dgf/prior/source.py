@@ -30,6 +30,29 @@ def closed_phase_leading(t, u, p, treshold, offset=0.):
     u_nonzero_swapped = _swap_dgf(t_nonzero - offset, u_nonzero, p['Te'], treshold)
     return np.concatenate((u[:i[0]], u_nonzero_swapped, u[i[-1]+1:]))
 
+def _sample_and_log_prob_xt(rng):
+    # Sample and get probability of `generic` LF parameters...
+    prior = lf.generic_params_marginal_prior()
+    xg, log_prob_xg = prior.experimental_sample_and_log_prob(
+        seed=jax.random.PRNGKey(rng.integers(int(1e4)))
+    )
+    
+    # ... and convert to `T` parameters
+    def xg_to_xt(xg):
+        p = lf.generic_params_to_dict(xg, squeeze=True)
+        p = lfmodel.convert_lf_params(p, 'generic -> T')
+        return jnp.array([p[k] for k in constants.LF_T_PARAMS]), p
+    
+    xt, p = xg_to_xt(xg)
+    jacobian, _ = jax.jacobian(xg_to_xt, has_aux=True)(xg)
+    log_prob_xt = log_prob_xg - jnp.linalg.slogdet(jacobian)[1]
+    
+    return xt, log_prob_xt, p
+
+def _t_params_to_dict(xt):
+    p = {k: xt[i] for i, k in enumerate(constants.LF_T_PARAMS)}
+    return p
+
 def _normalized_power(u):
     power = jnp.mean(jnp.sum(u**2))
     u = u/jnp.sqrt(power)
@@ -47,10 +70,10 @@ def _sample_and_jacobian(normalized_dgf, p):
 
     return u, jacobian
 
-def _log_prob_u(log_prob_p, sigma, jacobian):
+def _log_prob_u(log_prob_xt, sigma, jacobian):
     N, P = jacobian.shape
 
-    term1 = log_prob_p
+    term1 = log_prob_xt
     term2 = (-1/2)*(N - P)*jnp.log(2*jnp.pi*sigma**2)
     term3 = (-1/2)*jnp.linalg.slogdet(jacobian.T @ jacobian)[1]
     
@@ -73,15 +96,8 @@ def sample_and_logprob_q(fs, T, rng):
     
     Steps (1) and (2) affect the final probability such that `q(u) != q(u0)`.
     """
-    # Sample and get probability of `generic` LF parameters and convert to `T` parameters
-    prior = lf.generic_params_marginal_prior()
-    x, log_prob_x = prior.experimental_sample_and_log_prob(
-        seed=jax.random.PRNGKey(rng.integers(int(1e4)))
-    )
-    
-    p = lf.generic_params_to_dict(x, squeeze=True)
-    p = lfmodel.convert_lf_params(p, 'generic -> T')
-    log_prob_p = log_prob_x
+    # Sample and get probability of `T` parameters
+    xt, log_prob_xt, p = _sample_and_log_prob_xt(rng)
     
     # Define the grid
     if T is None:
@@ -105,7 +121,7 @@ def sample_and_logprob_q(fs, T, rng):
     u = _add_noise(u, sigma, rng)
     
     # Calculate the probability `q(u)` given the noise floor and power normalization
-    log_prob_u = _log_prob_u(log_prob_p, sigma, jacobian)
+    log_prob_u = _log_prob_u(log_prob_xt, sigma, jacobian)
     
     # And finally, swap the closed phase to the front (doesn't affect `q(u)`)
     u = closed_phase_leading(t, u, p, treshold=sigma/3)

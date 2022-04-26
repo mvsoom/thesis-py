@@ -215,7 +215,7 @@ def sample_lf_params(fs=10., numsamples=int(1e5), seed=2387):
     for k, bounds in constants.LF_GENERIC_BOUNDS.items():
         lower, upper = bounds
         mask &= (lower < p[k]) & (p[k] < upper)
-    
+
     p = _apply_mask(p, mask)
     return p
 
