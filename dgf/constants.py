@@ -30,7 +30,7 @@ MIN_QA = _ZERO
 MAX_QA = 1.
 
 # Bounds for the generic LF model parameters
-LF_GENERIC_PARAMS = ("power", "T0", "Oq", "am", "Qa")
+LF_GENERIC_PARAMS = ('power', 'T0', 'Oq', 'am', 'Qa')
 LF_GENERIC_BOUNDS = {
     'power': [MIN_DGF_POWER, MAX_DGF_POWER],
     'T0': [MIN_PERIOD_LENGTH_MSEC, MAX_PERIOD_LENGTH_MSEC],
@@ -38,3 +38,12 @@ LF_GENERIC_BOUNDS = {
     'am': [MIN_AM, MAX_AM], 
     'Qa': [MIN_QA, MAX_QA]
 }
+
+LF_T_PARAMS = ('T0', 'Te', 'Tp', 'Ta')
+
+# Noise floor
+def db_to_power(x, ref=1.):
+    return ref*10**(x/10)
+
+NOISE_FLOOR_DB = -60. # Assuming power normalized data, i.e., the power is unity
+NOISE_FLOOR_POWER = db_to_power(NOISE_FLOOR_DB)
