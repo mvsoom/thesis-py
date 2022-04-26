@@ -12,9 +12,5 @@ export PYTHONPYCACHEPREFIX=$CACHEDIR/pyc
 #NUM_CORES=$(nproc --all)
 #export XLA_FLAGS=--xla_force_host_platform_device_count=$NUM_CORES
 
-# Limit ourselves to single-threaded JAX/XLA operations
-# https://github.com/google/jax/issues/743
-export XLA_FLAGS="--xla_cpu_multi_thread_eigen=false intra_op_parallelism_threads=1"
-
 export WORKING_ENVIRONMENT_ACTIVATED=
 echo Working environment activated
