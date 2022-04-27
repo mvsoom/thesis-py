@@ -165,7 +165,7 @@ def _apply_mask(p, mask):
     return p
 
 @__memory__.cache
-def sample_lf_params(fs=10., numsamples=int(1e5), seed=2387):
+def sample_lf_params(fs=constants.FS_KHZ, numsamples=int(1e5), seed=2387):
     """Sample the `R`, `T` and `generic` parameters of the LF model
 
     This will return less samples than `numsamples`, because we emply rejection
@@ -310,14 +310,12 @@ def generic_params_to_dict(x, squeeze=False):
 def sample_dgf(
     num_pitch_periods,
     prior,
-    fs=10.,
-    return_logprob=False,
+    fs=constants.FS_KHZ,
     seed=4812
-):  
-    x = prior.sample(seed=jax.random.PRNGKey(seed))
-    logprob = prior.log_prob(x)
+):
+    xg = prior.sample(seed=jax.random.PRNGKey(seed))
     
-    p = generic_params_to_dict(x)
+    p = generic_params_to_dict(xg)
     p = lfmodel.convert_lf_params(p, 'generic -> T')
 
     GOI = jnp.cumsum(p['T0']) - p['T0'][0]
@@ -337,4 +335,4 @@ def sample_dgf(
     warn_if_nans(u)
     u = jnp.nansum(u, axis=0)
 
-    return (logprob, t, u) if return_logprob else (t, u)
+    return t, u
