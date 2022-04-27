@@ -167,7 +167,7 @@ def _apply_mask(p, mask):
 @__memory__.cache
 def sample_lf_params(fs=10., numsamples=int(1e5), seed=2387):
     """Sample the `R`, `T` and `generic` parameters of the LF model
-    
+
     This will return less samples than `numsamples`, because we emply rejection
     sampling. The regression equations are valid only for a certain range of `Re`
     (the `RE_BOUNDS`) and we impose bounds on all `R` and `generic` parameters.

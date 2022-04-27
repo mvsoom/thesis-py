@@ -1,5 +1,13 @@
 """Physical constants used in the program"""
+import numpy as np
+
 _ZERO = 1e-3
+
+# We work up until 5 kHz
+FS_KHZ = 10.
+
+# The boundary factor `c` (Riutort-Mayol 2020)
+BOUNDARY_FACTOR = 2.
 
 # Determined empirically from Serwy (2017)
 MIN_FUNDAMENTAL_FREQUENCY_HZ = 50 # Hz
@@ -16,17 +24,17 @@ MAX_DECLINATION_TIME_MSEC = 4.5
 
 # Lower bounds for the open quotient are based on Drugman (2019, Table 1) and Henrich (2005)
 MIN_OQ = 0.30
-MAX_OQ = 1.
+MAX_OQ = 1 - _ZERO
 
 MEDIAN_OQ = 0.60
 
 # Bounds for the asymmetry coefficient are based on Doval (2006, p. 5)
 MIN_AM = 0.5
-MAX_AM = 1.
+MAX_AM = 1 - _ZERO
 
 # Bounds for the return phase quotient are based on Doval (2006, p. 5)
 MIN_QA = _ZERO
-MAX_QA = 1.
+MAX_QA = 1 - _ZERO
 
 # Bounds for the generic LF model parameters assuming `Ee == 1`
 LF_GENERIC_PARAMS = ('T0', 'Oq', 'am', 'Qa')
@@ -39,7 +47,35 @@ LF_GENERIC_BOUNDS = {
 
 LF_T_PARAMS = ('T0', 'Te', 'Tp', 'Ta')
 
-SOURCE_PARAMS = ('var', 'r', 'T', 'Oq', 'noise_power')
+# Bounds for the variance of a GP given that the data is power-normalized
+MIN_VAR = 1e-3
+MAX_VAR = 10.
+
+MEDIAN_VAR = 1.
+
+# Bounds for the relative scale `r`
+MIN_R = 1/(np.pi*FS_KHZ*MAX_PERIOD_LENGTH_MSEC)
+MAX_R = 10. # Independent of the period `T`
+
+MEDIAN_R = 1/np.pi # TODO: how much does this depend on the kernel used?
+
+# Bounds for the source parameters
+SOURCE_PARAMS = ('var', 'r', 'T', 'Oq')
+
+SOURCE_BOUNDS = {
+    'var': [MIN_VAR, MAX_VAR],
+    'r': [MIN_R, MAX_R],
+    'T': [MIN_PERIOD_LENGTH_MSEC, MAX_PERIOD_LENGTH_MSEC],
+    'Oq': [MIN_OQ, MAX_OQ]
+}
+
+# Used in for the priors when fitting the DGF prior to samples from the LF model
+SOURCE_MEDIAN = {
+    'var': MEDIAN_VAR,
+    'r': MEDIAN_R,
+    'T': MEDIAN_PERIOD_LENGTH_MSEC,
+    'Oq': MEDIAN_OQ
+}
 
 # Noise floor
 def db_to_power(x, ref=1.):
@@ -47,6 +83,3 @@ def db_to_power(x, ref=1.):
 
 NOISE_FLOOR_DB = -60. # Assuming power normalized data, i.e., the power is unity
 NOISE_FLOOR_POWER = db_to_power(NOISE_FLOOR_DB)
-
-# The boundary factor `c` (Riutort-Mayol 2020)
-BOUNDARY_FACTOR = 2.
