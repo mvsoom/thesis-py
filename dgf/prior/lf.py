@@ -176,7 +176,7 @@ def sample_lf_params(fs=10., numsamples=int(1e5), seed=2387):
     key1, key2, key3 = jax.random.split(jax.random.PRNGKey(seed), 3)
     rng_seed = int(jax.random.randint(key1, (1,), minval=0, maxval=int(1e4)))
     rng = np.random.default_rng(rng_seed)
-    
+
     # Sample pitch periods and declination times (both in msec)
     T0 = period.marginal_prior().sample(numsamples, seed=key2)
     Td = holmberg.declination_time_prior().sample(numsamples, seed=key3)
