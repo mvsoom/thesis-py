@@ -79,13 +79,21 @@ def kernelmatrix_root_hilbert(kernel, var, scale, t, M, L):
     R = impose_domain(R, t, 0., L)
     return R # (len(t), M)
 
-@partial(jit, static_argnames=("kernel", "M"))
-def kernelmatrix_root_gfd(kernel, var, scale, t, M, T, c):
+@partial(jit, static_argnames=("kernel", "M", "impose_null_integral"))
+def kernelmatrix_root_gfd(kernel, var, scale, t, M, T, c, impose_null_integral=True):
     L = c*T
     d = sqrt_gamma_coefficients(kernel, var, scale, M, L)
     R = d[None,:] * phi_matrix(t, M, L)
-    R = impose_zero_integral_constraint(d, R, M, T, L)
+    if impose_null_integral:
+        R = impose_null_integral_constraint(d, R, M, T, L) # O(M²)
     R = impose_domain(R, t, 0., T)
+    return R # (len(t), M)
+
+@partial(jit, static_argnames=("kernel", "M", "impose_null_integral"))
+def kernelmatrix_root_gfd_oq(kernel, var, r, t, M, T, Oq, c, impose_null_integral=True):
+    GOI = T*(1 - Oq)
+    scale = r*T*Oq
+    R = kernelmatrix_root_gfd(kernel, var, scale, t - GOI, M, T*Oq, c, impose_null_integral)
     return R # (len(t), M)
 
 @partial(jit, static_argnames=("kernel", "M"))
@@ -93,7 +101,7 @@ def kernelmatrix_root_convolved_gfd(kernel, var, scale, t, M, T, c, poles):
     L = T*c
     d = sqrt_gamma_coefficients(kernel, var, scale, M, L)
     R = d[None,:] * phi_transfer_matrix(t, M, T, L, poles)
-    R = impose_zero_integral_constraint(d, R, M, T, L)
+    R = impose_null_integral_constraint(d, R, M, T, L)
 #   R = impose_domain(R, t, 0., jnp.inf) # Already imposed by `phi_transfer_matrix()`
     return R # (len(t), M)
 
@@ -104,7 +112,7 @@ def impose_domain(R, t, a, b):
     return jnp.where(outside_domain, 0., R)
 
 @partial(jit, static_argnames=("M"))
-def impose_zero_integral_constraint(d, R, M, T, L):
+def impose_null_integral_constraint(d, R, M, T, L):
     assert R.shape[1] == M
     q = d * phi_integrated_matrix_at(T, M, L)
     q /= jnp.linalg.norm(q)
