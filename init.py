@@ -7,6 +7,7 @@ __all__ = [
     '__datadir__',
     '__cachedir__',
     '__memory__',
+    'sns',
     'jax',
     'jnp'
 ]
@@ -28,6 +29,9 @@ def __cachedir__(s=''):
 # Configure joblib's caching mechanism
 import joblib
 __memory__ = joblib.Memory(__cachedir__('joblib'), verbose=2)
+
+# Configure global plotting options
+import seaborn as sns
 
 # Import and configure JAX
 import jax
