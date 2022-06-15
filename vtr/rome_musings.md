@@ -1,0 +1,3 @@
+- Value of M can be derived from fs because after a certain value of M the sin() basis has power outside the Nyquist bandwidth. This depends on the lengthscale, so M could be made adaptive. Makes sense because M controls wigglyness, and maximum wigglyness observable is controlled by fs
+- Steady state model: expand exp() with Hilbert and simplify G.T*G analytically
+- Steady state model: fixed expansion order Q is OK because of amplitude ~ N(0,sigma) representation. So excessive poles will be suppressed automatically by having zero amplitude. But this argument cannot be made when using an all-pole transfer function representation.
