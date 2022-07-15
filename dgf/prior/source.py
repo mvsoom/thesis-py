@@ -284,5 +284,5 @@ def yield_modeled_lf_samples(
                         )
 
 def __dummy():
-    # Stop retriggering cache calculation
+    # Stops retriggering cache calculation
     pass
