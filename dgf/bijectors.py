@@ -41,6 +41,12 @@ def bounded_exp_bijector(low, high, eps = 1e-5, hinge_factor=0.01):
     hinge_softness = hinge_factor * jnp.abs(low)
     return tfb.Chain([tfb.SoftClip(low, high, hinge_softness), tfb.Exp()])
 
+def color_bijector(mean, cov):
+    """Transform samples from `N(0, I)` to `N(mean, cov)`"""
+    shift = tfb.Shift(mean)
+    scale = tfb.ScaleMatvecTriL(jnp.linalg.cholesky(cov))
+    return tfb.Chain([shift, scale])
+
 def period_bijector():
     return bounded_exp_bijector(
         constants.MIN_PERIOD_LENGTH_MSEC,

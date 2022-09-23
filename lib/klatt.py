@@ -20,7 +20,7 @@ def gen_vowel(v, u_prime, t, normalize_power=True):
 
     zeros = np.array([])
     poles_ = np.hstack([p, np.conj(p)])
-    gain = 1.
+    gain = np.abs(p)**2
 
     T, y, _ = scipy.signal.lsim((zeros, poles_, gain), u_prime, t)
     
@@ -37,11 +37,7 @@ def freqresp(v, w=None):
     w, H = scipy.signal.freqresp(([], conjp, k), w)
     return w, H
 
-def play(t, y, resample_rate=None, autoplay=True):
-    """resample_rate must be in Hz"""
+def play(t, y, autoplay=True):
     dt = t[1] - t[0]
     rate = int(1000./dt)
-    if resample_rate:
-        y = resample(y, int(len(y)*resample_rate/rate))
-        rate = resample_rate
     return Audio(y, rate=rate, autoplay=autoplay, normalize=True)
