@@ -3,19 +3,6 @@ import tensorflow_probability.substrates.jax.bijectors as tfb
 
 from dgf import constants
 
-import warnings
-
-# https://github.com/tensorflow/probability/issues/1523
-# Note: if this results in too much overhead, we could implement the `bounded_exp_bijector()`
-# from scratch with https://github.com/yonesuke/softclip. The implementation of this GitHub
-# repo is unfortunately different from the one of TF probability.
-import logging
-logger = logging.getLogger()
-class CheckTypesFilter(logging.Filter):
-    def filter(self, record):
-        return "check_types" not in record.getMessage()
-logger.addFilter(CheckTypesFilter())
-
 def bounded_exp_bijector(low, high, eps = 1e-5, hinge_factor=0.01):
     """
     Transform an unbounded real variable to a positive bounded variable in `[low, high]`.
@@ -24,9 +11,6 @@ def bounded_exp_bijector(low, high, eps = 1e-5, hinge_factor=0.01):
     
     The hinge softness in the SoftClip is determined automatically as `hinge_factor*low`
     to prevent scaling issues. (See comment below in the function's source.)
-    
-    Note: this function is quite slow because of a TensorFlow bug. See the head of this
-    function's source file (https://github.com/tensorflow/probability/issues/1523).
     """
     low = jnp.float64(low) * (1 - eps)
     high = jnp.float64(high) * (1 + eps)
