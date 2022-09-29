@@ -79,7 +79,7 @@ def kernelmatrix_root_hilbert(kernel, var, scale, t, M, L):
     R = impose_domain(R, t, 0., L)
     return R # (len(t), M)
 
-@partial(jit, static_argnames=("kernel", "M", "impose_null_integral"))
+@partial(jit, static_argnames=("kernel", "M", "c", "impose_null_integral"))
 def kernelmatrix_root_gfd(kernel, var, scale, t, M, T, c, impose_null_integral=True):
     L = c*T
     d = sqrt_gamma_coefficients(kernel, var, scale, M, L)
@@ -89,14 +89,14 @@ def kernelmatrix_root_gfd(kernel, var, scale, t, M, T, c, impose_null_integral=T
     R = impose_domain(R, t, 0., T)
     return R # (len(t), M)
 
-@partial(jit, static_argnames=("kernel", "M", "impose_null_integral"))
+@partial(jit, static_argnames=("kernel", "M", "c", "impose_null_integral"))
 def kernelmatrix_root_gfd_oq(kernel, var, r, t, M, T, Oq, c, impose_null_integral=True):
     GOI = T*(1 - Oq)
     scale = r*T*Oq
     R = kernelmatrix_root_gfd(kernel, var, scale, t - GOI, M, T*Oq, c, impose_null_integral)
     return R # (len(t), M)
 
-@partial(jit, static_argnames=("kernel", "M"))
+@partial(jit, static_argnames=("kernel", "M", "c"))
 def kernelmatrix_root_convolved_gfd(kernel, var, scale, t, M, T, c, poles):
     L = T*c
     d = sqrt_gamma_coefficients(kernel, var, scale, M, L)
