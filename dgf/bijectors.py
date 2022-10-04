@@ -65,6 +65,7 @@ def lf_generic_params_trajectory_bijector(num_pitch_periods):
     # not a problem however.
     bijector = lf_generic_params_bijector(eps=1e-1)
     if num_pitch_periods > 50:
+        import warnings
         warnings.warn(
             'The log det Jacobian of `lf_generic_params_bijector()` can become unstable for '
             'the `lf_generic_params_trajectory_prior()` because the generic LF parameters '
