@@ -1,7 +1,186 @@
+import jax
 import jax.numpy as jnp
+
+import tensorflow_probability.substrates.jax.distributions as tfd
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
+import scipy.stats
+import dynesty
+
 from dgf import constants
+
+def get_log_stats(samples, bounds):
+    """
+    Collect Gaussian stats for `samples` in the log domain. If there are
+    `n` samples of `d` variables, `samples` must be shaped `(n, d)` and
+    `bounds` must have shape `(n, 2)` indicating the bounds of the samples
+    in the *original* domain.
+    """
+    # Transform variables to log domain in-place
+    samples = jnp.log(samples)
+    bounds = jnp.log(bounds)
+
+    # Get Gaussian stats
+    mean = jnp.mean(samples, axis=0)
+    cov = jnp.cov(samples.T)
+    sigma = jnp.sqrt(jnp.diag(cov))
+    corr = jnp.diag(1/sigma) @ cov @ jnp.diag(1/sigma)
+    L_corr = jnp.linalg.cholesky(corr)
+    
+    logstats = dict(
+        samples=samples, bounds=bounds, mean=mean,
+        cov=cov, sigma=sigma, corr=corr, L_corr=L_corr
+    )
+    return logstats
+
+def softclipexp_bijector(bounds, sigma):
+    """
+    Transform an unbounded real variable in `R^n` with scale `sigma` to a
+    positive bounded variable by first softclipping it to lie within `bounds`
+    and then exponentiating it. `sigma` must have shape `(n,)` to indicate
+    the scale for each dimension and `bounds` must have shape `(n, 2)`.
+    """
+    return tfb.Chain([
+        tfb.Exp(), tfb.SoftClip(
+            bounds[:,0], bounds[:,1], sigma
+        )
+    ])
+
+def color_bijector(mean, cov):
+    """Transform samples from `N(0, I)` to `N(mean, cov)`"""
+    tril = jnp.linalg.cholesky(cov)
+    return color_bijector_tril(mean, tril)
+
+def color_bijector_tril(mean, tril):
+    shift = tfb.Shift(mean)
+    scale = tfb.ScaleMatvecTriL(tril)
+    return tfb.Chain([shift, scale])
+
+def fit_nonlinear_coloring_bijector(samples, bounds):
+    """
+    Fit a **nonlinear coloring bijector** that takes `z ~ N(0, I)` samples
+    first through a linear coloring bijector (to get a multivariate Gaussian)
+    and then through a nonlinear bijector (to get bounds and exponentiate)
+    to the empirical distribution of `samples` as well as possible by
+    maximizing the likelihood `L(s) = p(samples|s)`, where `s` is a vector
+    of rescaling coefficients that rescale the empirical covariance matrix
+    of `samples` *in the log domain*. In other words, we fit `s` by
+    direct maximum likelihood to find a new, rescaled covariance matrix
+    that we can use in the log domain to model `samples`.
+    
+    The probability `p(samples|s)` is given by transforming a MVN with the
+    `softclipexp` bijector and the prior `p(s) = Exp(1)` expresses that the
+    rescaling coefficients are of order 1, such that the empirical covariance
+    matrix of `log(samples)` is deemed to be a good fit.
+    """
+    # Collect statistics in the log domain to setup the fit
+    logstats = get_log_stats(samples, bounds)
+    
+    # Create the static softclipexp bijector which will not be optimized
+    softclipexp = softclipexp_bijector(logstats['bounds'], logstats['sigma'])
+    
+    # Define the likelihood function `L(s) = p(samples|s)`
+    @jax.jit
+    def loglike(s):
+        prior = getprior(s)
+        logprob = jnp.sum(prior.log_prob(samples))
+        return logprob
+    
+    def rescaled_normal_tril(s):
+        """
+        Get `cholesky(Sigma(s))` where `Sigma(s)` is the rescaled
+        covariance matrix by the rescaling factors `s`
+        """
+        return jnp.diag(s*logstats['sigma']) @ logstats['L_corr']
+    
+    def getprior(s):
+        mvn = tfd.MultivariateNormalTriL(
+            loc=logstats['mean'],
+            scale_tril=rescaled_normal_tril(s)
+        )
+        prior = tfd.TransformedDistribution(
+            distribution=mvn,
+            bijector=softclipexp
+        )
+        return prior
+    
+    # Define the prior
+    def ptform(
+        u,
+        rescale_prior=scipy.stats.expon(scale=1.)
+    ):
+        return rescale_prior.ppf(u)
+    
+    # Run the sampler
+    ndim = samples.shape[1]
+    sampler = dynesty.NestedSampler(loglike, ptform, ndim, nlive=ndim*5)
+    sampler.run_nested()
+    
+    # Get the maximum likelihood fit of the rescaling parameters...
+    s_ML = sampler.results.samples[-1,:]
+    
+    # ... and use them to create the best bijector `N(0,I)`to `p(samples)`
+    tril_ML = rescaled_normal_tril(s_ML)
+    color = color_bijector_tril(logstats['mean'], tril_ML)
+    
+    # Construct the bijector and expose the parameters in a more handy format
+    nlc = tfb.Chain([
+        softclipexp, color
+    ])
+    
+    nlc.meta = {
+        'softclipexp': {
+            'bounds': logstats['bounds'],
+            'sigma': logstats['sigma']
+        },
+        'color': {
+            'mean': logstats['mean'],
+            'tril': tril_ML, # Cholesky of covariance matrix
+        }
+    }
+    
+    return nlc
+
+def nonlinear_coloring_bijector_params(nlc):
+    softclipexp, color = nlc.bijectors
+    exp, softclip = softclipexp.bijectors
+    shift, scale = color.bijectors
+    return {
+        'softclipexp': {
+            'bounds': jnp.vstack(
+                [softclip.parameters['low'], softclip.parameters['high']]
+            ).T,
+            'sigma': softclip.parameters['hinge_softness']
+        },
+        'color': {
+            'mean': shift.parameters['shift'],
+            'tril': scale.parameters['scale_tril'] # cholesky of covariance
+        }
+    }
+
+def fit_nonlinear_coloring_prior(
+    samples,
+    bounds,
+    name='NonlinearColoringPrior'
+):
+    """
+    Model the empirical distribution of `samples` with a nonlinear
+    coloring prior using maximum likelihood. Given `n` samples of `d`
+    variables, `samples` must be shaped `(n, d)` and `bounds` must have
+    shape `(n, 2)` indicating the bounds of the samples in the *original*
+    domain.
+    """
+    ndim = samples.shape[1]
+    standardnormals = tfd.MultivariateNormalDiag(scale_diag=jnp.ones(ndim))
+    nonlinear_coloring = fit_nonlinear_coloring_bijector(samples, bounds)
+    prior = tfd.TransformedDistribution(
+        distribution=standardnormals,
+        bijector=nonlinear_coloring,
+        name=name
+    )
+    return prior
+
+############
 
 def bounded_exp_bijector(low, high, eps = 1e-5, hinge_factor=0.01):
     """
@@ -24,12 +203,6 @@ def bounded_exp_bijector(low, high, eps = 1e-5, hinge_factor=0.01):
     # where `b = bounded_exp_bijector(low, high, hinge_factor)`.
     hinge_softness = hinge_factor * jnp.abs(low)
     return tfb.Chain([tfb.SoftClip(low, high, hinge_softness), tfb.Exp()])
-
-def color_bijector(mean, cov):
-    """Transform samples from `N(0, I)` to `N(mean, cov)`"""
-    shift = tfb.Shift(mean)
-    scale = tfb.ScaleMatvecTriL(jnp.linalg.cholesky(cov))
-    return tfb.Chain([shift, scale])
 
 def period_bijector():
     return bounded_exp_bijector(

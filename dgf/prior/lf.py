@@ -219,35 +219,35 @@ def sample_lf_params(fs=constants.FS_KHZ, numsamples=int(1e5), seed=2387):
     p = _apply_mask(p, mask)
     return p
 
-def fit_lf_generic_z():
-    # Select the `generic` parameters from the collection of LF parameters in `p`
-    p = sample_lf_params()
-    samples = np.vstack([p[v] for v in constants.LF_GENERIC_PARAMS]).T
-
-    # Transform to z domain
-    z = bijectors.lf_generic_params_bijector().inverse(samples)
-    assert not np.any(np.isnan(z)) # Bounds are already forced during sampling
-
-    # Fit a Gaussian in the z domain
-    generic_mean_z = np.mean(z, axis=0)
-    generic_cov_z = np.cov(z.T)
-    return generic_mean_z, generic_cov_z
-
 ################################################################################
 # Finally, define the priors based on the fitted distributions in the z domain #
 ################################################################################
-def _multivariate_tril_kron(num_pitch_periods, marginal_mean, marginal_K, envelope_K):
-    """Implement a multivariate normal with Kronecker-structured covariance matrix"""
-    mean_trajectory = np.kron(marginal_mean, np.ones(num_pitch_periods))
-
-    def stabilize(A):
-        n = A.shape[0]
-        return A + np.eye(n)*n*np.finfo(float).eps
-
-    marginal_L = np.linalg.cholesky(stabilize(marginal_K))
-    envelope_L = np.linalg.cholesky(stabilize(envelope_K))
-    cov_cholesky_trajectory = np.kron(marginal_L, envelope_L)
-    return mean_trajectory, cov_cholesky_trajectory
+@__memory__.cache
+def generic_params_prior():
+    """
+    Prior for the generic parameters of the LF model.
+    Equivalent to `generic_params_trajectory_prior(1)`.
+    """
+    p = lf.sample_lf_params()
+    
+    # Select the `generic` parameters from the collection of LF parameters in `p`
+    samples = jnp.vstack([p[v] for v in constants.LF_GENERIC_PARAMS]).T
+    bounds = jnp.array([
+        constants.LF_GENERIC_BOUNDS[k] for k in constants.LF_GENERIC_PARAMS
+    ])
+    
+    # Model the empirical distribution of `samples` with a nonlinear
+    # coloring prior using maximum likelihood.
+    ndim = len(constants.LF_GENERIC_PARAMS)
+    standardnormals = tfd.MultivariateNormalDiag(scale_diag=jnp.ones(ndim))
+    nonlinear_coloring = fit_nonlinear_coloring_bijector(samples, bounds)
+    prior = tfd.TransformedDistribution(
+        distribution=standardnormals,
+        bijector=nonlinear_coloring,
+        name=name
+    )
+    
+    return prior
 
 def generic_params_trajectory_prior(
     num_pitch_periods,
@@ -288,17 +288,18 @@ def generic_params_trajectory_prior(
     
     return prior # `prior.sample()` has shape (num_pitch_periods, len(constants.LF_GENERIC_PARAMS))
 
-def generic_params_marginal_prior():
-    """Faster and leaner version of `generic_params_trajectory_prior(1)`"""
-    marginal_mean, marginal_K = fit_lf_generic_z()
-    
-    prior = tfd.TransformedDistribution(
-        distribution=tfd.MultivariateNormalFullCovariance(marginal_mean, marginal_K),
-        bijector=bijectors.lf_generic_params_bijector(),
-        name='GenericParamsMarginalPrior'
-    )
-    
-    return prior
+def _multivariate_tril_kron(num_pitch_periods, marginal_mean, marginal_K, envelope_K):
+    """Implement a multivariate normal with Kronecker-structured covariance matrix"""
+    mean_trajectory = np.kron(marginal_mean, np.ones(num_pitch_periods))
+
+    def stabilize(A):
+        n = A.shape[0]
+        return A + np.eye(n)*n*np.finfo(float).eps
+
+    marginal_L = np.linalg.cholesky(stabilize(marginal_K))
+    envelope_L = np.linalg.cholesky(stabilize(envelope_K))
+    cov_cholesky_trajectory = np.kron(marginal_L, envelope_L)
+    return mean_trajectory, cov_cholesky_trajectory
 
 def generic_params_to_dict(x, squeeze=False):
     x = jnp.atleast_2d(x)
