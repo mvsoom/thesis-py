@@ -12,14 +12,14 @@ import tensorflow_probability.substrates.jax.bijectors as tfb
 import scipy.stats
 import dynesty
 
-SAMPLERARGS = {'bound': 'multi', 'sample': 'rslice', 'bootstrap': 10}
+SAMPLERARGS = {}
 RUNARGS = {'save_bounds': False}
 
 def get_log_stats(samples, bounds):
     """
     Collect Gaussian stats for `samples` in the log domain. If there are
     `n` samples of `d` variables, `samples` must be shaped `(n, d)` and
-    `bounds` must have shape `(n, 2)` indicating the bounds of the samples
+    `bounds` must have shape `(d, 2)` indicating the bounds of the samples
     in the *original* domain.
     """
     # Transform variables to log domain in-place
@@ -68,7 +68,7 @@ def fit_nonlinear_coloring_bijector(
 ):
     """
     **NOTE:** This function memoizes fit results primarily based on the `cacheid`,
-    NOT on the `samples` and `bounds`! Suppying unique `cacheid`s is ESSENTIAL.
+    NOT on the `samples` and `bounds`! Suppying unique `cacheid`s is essential.
     
     Fit a **nonlinear coloring bijector** that takes `z ~ N(0, I)` samples
     first through a linear coloring bijector (to get a multivariate Gaussian)
@@ -79,6 +79,9 @@ def fit_nonlinear_coloring_bijector(
     of `samples` *in the log domain*. In other words, we fit `s` by
     direct maximum likelihood to find a new, rescaled covariance matrix
     that we can use in the log domain to model `samples`.
+    
+    `samples` must be shaped `(n, d)` and `bounds` must have shape `(d, 2)` 
+    indicating the bounds of the `d` variables in the *original* domain.
     
     The probability `p(samples|s)` is given by transforming a MVN with the
     `softclipexp` bijector and the prior `p(s) = Exp(1)` expresses that the
@@ -194,8 +197,13 @@ def nonlinear_coloring_trajectory_bijector(
     )
 
     index_points = jnp.arange(m).astype(float)[:,None]
+    
+    def stabilize(A):
+        n = A.shape[0]
+        return A + np.eye(n)*n*np.finfo(float).eps
+    
     envelope_K = envelope_kernel.matrix(index_points, index_points)
-    envelope_tril = jnp.linalg.cholesky(envelope_K)
+    envelope_tril = jnp.linalg.cholesky(stabilize(envelope_K))
 
     # Construct the MVN with Kronecker kernel `k((r,i), (s,j)) = k(r,s) k(i,j)`
     # Note that `chol(A x B) = chol(A) x chol(B)`, where `x` is Kronecker product
