@@ -117,6 +117,7 @@ def sample_R_triple(Re, rng):
     We use the equations that assume that `Re` is in `[0.3, 2.7]`, the main range
     of variation. The upper range `Re in [2.7, 5]` is "intended for transitions towards
     complete abduction as in prepause voice terminations" (Fant 1995, p. 123).
+    
 
     See Fant (1994) for the meaning of these dimensionless parameters
     * Note that in that paper they are given in percent (%)
@@ -142,7 +143,8 @@ def calculate_Re(T0, Td):
     In this way we can induce correlations between T0 and all other variables, as
     empirically observed (Henrich 2005).
     
-    Note that `Re` in Fant (1994) is called `Rd` in Fant (1995) and Perrotin (2021).
+    Note that `Re` in Fant (1994) is called `Rd` in Fant (1995) and Perrotin (2021)
+    and in Freixes (2018).
     """
     F0 = 1/T0 # kHz
     Re = Td * F0 / (0.11) # Fant (1994) Eq. (4)
@@ -222,7 +224,6 @@ def sample_lf_params(fs=constants.FS_KHZ, numsamples=int(1e5), seed=2387):
 ################################################################################
 # Finally, define the priors based on the fitted distributions in the z domain #
 ################################################################################
-@__memory__.cache
 def generic_params_prior(seed=98183):
     """
     Prior for the generic parameters of the LF model. Running this for the first
@@ -258,80 +259,32 @@ def generic_params_trajectory_prior(
     envelope_kernel_name=None,
     envelope_lengthscale=None
 ):
-    # Get the marginal (at a given pitch period) means and correlations
-    marginal_prior = generic_params_prior()
-    marginal_mean = marginal_prior.bijector.meta['color']['mean']
-    marginal_tril = marginal_prior.bijector.meta['color']['tril']
-    
-    # FIXME: no need to form cov matrix
-    marginal_K = marginal_tril @ marginal_tril.T
+    # Get the marginal (at a given pitch period) means and correlations in
+    # terms of the nonlinear coloring bijector
+    nonlinear_coloring_bijector = generic_params_prior().bijector
 
     # Get the envelope (longitudinal) correlations
-    envelope_variance = 1.
     if envelope_kernel_name is None:
         envelope_kernel_name = period.MAP_KERNEL
     if envelope_lengthscale is None:
         envelope_lengthscale = period.fit_aplawd_z()['scale']
     
-    envelope_kernel = isokernels.resolve(envelope_kernel_name)(
-        envelope_variance, envelope_lengthscale
-    )
-
-    index_points = jnp.arange(num_pitch_periods).astype(float)[:,None]
-    envelope_K = envelope_kernel.matrix(index_points, index_points)
-
-    # Construct the multivariate normal describing the trajectories in the z domain
-    mean_trajectory, cov_cholesky_trajectory = lf._multivariate_tril_kron(
-        num_pitch_periods, marginal_mean, marginal_K, envelope_K
+    # Get the corresponding bijector from white noise vector to trajectory matrix
+    bijector = bijectors.nonlinear_coloring_trajectory_bijector(
+        nonlinear_coloring_bijector,
+        envelope_kernel_name,
+        envelope_lengthscale,
+        num_pitch_periods
     )
     
-    z_trajectory = tfd.MultivariateNormalTriL(
-        loc=mean_trajectory, scale_tril=cov_cholesky_trajectory
-    )
+    # Get the white noise distribution
+    ndim = len(constants.LF_GENERIC_PARAMS)*num_pitch_periods
+    standardnormals = tfd.MultivariateNormalDiag(scale_diag=jnp.ones(ndim))
     
     prior = tfd.TransformedDistribution(
-        distribution=z_trajectory,
-        bijector=bijectors.lf_generic_params_trajectory_bijector(num_pitch_periods),
-        name='GenericParamsTrajectoryPrior'
-    )
-    
-    return prior # `prior.sample()` has shape (num_pitch_periods, len(constants.LF_GENERIC_PARAMS))
-
-def __generic_params_trajectory_prior_OLD(
-    num_pitch_periods,
-    envelope_kernel_name=None,
-    envelope_lengthscale=None
-):
-    # Get the marginal (cross-sectional) means and correlations
-    marginal_mean, marginal_K = fit_lf_generic_z()
-
-    # Get the envelope (longitudinal) correlations
-    envelope_variance = 1.
-    if envelope_kernel_name is None:
-        envelope_kernel_name = period.MAP_KERNEL
-    if envelope_lengthscale is None:
-        envelope_lengthscale = period.fit_aplawd_z()['scale']
-    
-    envelope_kernel = isokernels.resolve(envelope_kernel_name)(
-        envelope_variance, envelope_lengthscale
-    )
-
-    index_points = np.arange(num_pitch_periods).astype(float)[:,None]
-    envelope_K = envelope_kernel.matrix(index_points, index_points)
-
-    # Construct the multivariate normal describing the trajectories in the z domain
-    mean_trajectory, cov_cholesky_trajectory = _multivariate_tril_kron(
-        num_pitch_periods, marginal_mean, marginal_K, envelope_K
-    )
-    
-    z_trajectory = tfd.MultivariateNormalTriL(
-        loc=mean_trajectory, scale_tril=cov_cholesky_trajectory
-    )
-    
-    prior = tfd.TransformedDistribution(
-        distribution=z_trajectory,
-        bijector=bijectors.lf_generic_params_trajectory_bijector(num_pitch_periods),
-        name='GenericParamsTrajectoryPrior'
+        distribution=standardnormals,
+        bijector=bijector,
+        name='LFGenericParamsTrajectoryPrior'
     )
     
     return prior # `prior.sample()` has shape (num_pitch_periods, len(constants.LF_GENERIC_PARAMS))

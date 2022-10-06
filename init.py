@@ -9,7 +9,8 @@ __all__ = [
     '__memory__',
     'sns',
     'jax',
-    'jnp'
+    'jnp',
+    'jaxkey'
 ]
 
 # Define runtime working environment variables
@@ -45,3 +46,8 @@ jax.config.update("jax_enable_x64", True)
 if 'XLA_FLAGS' in os.environ:
     XLA_FLAGS = os.environ['XLA_FLAGS']
     warnings.warn(f'External XLA configuration is `XLA_FLAGS={XLA_FLAGS}`')
+
+import random
+def jaxkey(k=None):
+    if k is None: k = random.randint(0, 10000000)
+    return jax.random.PRNGKey(k)

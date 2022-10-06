@@ -1,4 +1,6 @@
 from init import __memory__
+from dgf import isokernels
+from dgf import constants
 
 import jax
 import jax.numpy as jnp
@@ -9,8 +11,6 @@ import tensorflow_probability.substrates.jax.bijectors as tfb
 
 import scipy.stats
 import dynesty
-
-from dgf import constants
 
 SAMPLERARGS = {'bound': 'multi', 'sample': 'rslice', 'bootstrap': 10}
 RUNARGS = {'save_bounds': False}
@@ -123,7 +123,7 @@ def fit_nonlinear_coloring_bijector(
     ):
         return rescale_prior.ppf(u)
     
-    # Run the sampler
+    # Run the sampler and cache results based on `cacheid`
     ndim = samples.shape[1]
     if 'nlive' not in samplerargs:
         samplerargs['nlive'] = ndim*5
@@ -147,23 +147,77 @@ def fit_nonlinear_coloring_bijector(
     tril_ML = rescaled_normal_tril(s_ML)
     color = color_bijector_tril(logstats['mean'], tril_ML)
     
-    # Construct the bijector and expose the parameters in a more handy format
     nlc = tfb.Chain([
         softclipexp, color
     ])
     
-    nlc.meta = {
-        'softclipexp': {
-            'bounds': logstats['bounds'],
-            'sigma': logstats['sigma']
-        },
-        'color': {
-            'mean': logstats['mean'],
-            'tril': tril_ML, # Cholesky of covariance matrix
-        }
-    }
-    
     return (nlc, results) if return_fit_results else nlc
+
+def nonlinear_coloring_trajectory_bijector(
+    nonlinear_coloring_bijector,
+    envelope_kernel_name,
+    envelope_lengthscale,
+    m
+):
+    """
+    Enhance a nonlinear coloring bijector in `R^n` with **trajectory structure**
+    expressed as a GP over `m` integer indexes. This bijector takes
+    a white noise **vector** `z` shaped `(n*m)` to a **matrix** `X` shaped `(m,n)`.
+    
+    For example, for `n = 2` and `m = 3`, the bijector takes
+    
+        z = [a1, a2, a3, b1, b2, b3]  ~  MVN(zeros(6), eye(6))
+    
+    to
+    
+            [[A1, B1],
+        X =  [A2, B2],  ~  {something positive, correlated and bounded}
+             [A3, B3]]
+    
+    where `A1 = f1(a1, a2, a3, b1, b2, b3)`, and so on.
+    """
+    # Pick apart the bijector of the nonlinear coloring prior
+    softclipexp, color = nonlinear_coloring_bijector.bijectors
+    
+    # Get the underlying MVN of the marginal (cross-sectional) prior
+    shift, scale = color.bijectors
+    
+    marginal_mean = shift.parameters['shift']
+    marginal_tril = scale.parameters['scale_tril']
+    
+    n = len(marginal_mean)
+
+    # Get the envelope (longitudinal) correlations
+    envelope_variance = 1.
+    envelope_kernel = isokernels.resolve(envelope_kernel_name)(
+        envelope_variance, envelope_lengthscale
+    )
+
+    index_points = jnp.arange(m).astype(float)[:,None]
+    envelope_K = envelope_kernel.matrix(index_points, index_points)
+    envelope_tril = jnp.linalg.cholesky(envelope_K)
+
+    # Construct the MVN with Kronecker kernel `k((r,i), (s,j)) = k(r,s) k(i,j)`
+    # Note that `chol(A x B) = chol(A) x chol(B)`, where `x` is Kronecker product
+    kron_mean = jnp.kron(marginal_mean, jnp.ones(m))
+    kron_tril = jnp.kron(marginal_tril, envelope_tril)
+    
+    # Construct the bijector from white noise `z ~ N(0,1)` in `R^ndim`
+    # where `ndim == n*envelope_points` to the desired trajectory
+    # which is a matrix that lives in `R^(envelope_points,n)`
+    color = color_bijector_tril(kron_mean, kron_tril)
+    
+    reshape = tfb.Reshape(
+        event_shape_out=(n,m),  # A matrix
+        event_shape_in=(n*m,)   # A vector ~ N(0,I)
+    )
+
+    # Transpose such that `softclipexp` can broadcast correctly
+    matrix_transpose = tfb.Transpose(rightmost_transposed_ndims=2)
+    
+    return tfb.Chain([
+        softclipexp, matrix_transpose, reshape, color
+    ])
 
 ############
 
@@ -200,34 +254,3 @@ def declination_time_bijector():
         constants.MIN_DECLINATION_TIME_MSEC,
         constants.MAX_DECLINATION_TIME_MSEC
     )
-
-def lf_generic_params_bijector(**kwargs):
-    bounds = jnp.array([
-        constants.LF_GENERIC_BOUNDS[k] for k in constants.LF_GENERIC_PARAMS
-    ])
-    return bounded_exp_bijector(bounds[:,0], bounds[:,1], **kwargs)
-
-def lf_generic_params_trajectory_bijector(num_pitch_periods):
-    # Reshape from 'Kronecker' structure to trajectory structure
-    reshape = tfb.Reshape(
-        event_shape_out=(len(constants.LF_GENERIC_PARAMS), num_pitch_periods),
-        event_shape_in=(-1,)
-    )
-
-    # Transpose such that `lf_generic_params_bijector()` can broadcast correctly
-    matrix_transpose = tfb.Transpose(rightmost_transposed_ndims=2)
-    
-    # Finally, convert to LF generic parameters. We are more permissive
-    # with respect to the boundaries because for a large values of `num_pitch_period`
-    # the log Jacobians of this bijector can become infinite. Sampling is
-    # not a problem however.
-    bijector = lf_generic_params_bijector(eps=1e-1)
-    if num_pitch_periods > 50:
-        import warnings
-        warnings.warn(
-            'The log det Jacobian of `lf_generic_params_bijector()` can become unstable for '
-            'the `lf_generic_params_trajectory_prior()` because the generic LF parameters '
-            'will at some point hit their bounds.'
-        )
-    
-    return tfb.Chain([bijector, matrix_transpose, reshape])
