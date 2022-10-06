@@ -223,10 +223,10 @@ def sample_lf_params(fs=constants.FS_KHZ, numsamples=int(1e5), seed=2387):
 # Finally, define the priors based on the fitted distributions in the z domain #
 ################################################################################
 @__memory__.cache
-def generic_params_prior():
+def generic_params_prior(seed=98183):
     """
-    Prior for the generic parameters of the LF model.
-    Equivalent to `generic_params_trajectory_prior(1)`.
+    Prior for the generic parameters of the LF model. Running this for the first
+    time takes O(1) minutes. Equivalent to `generic_params_trajectory_prior(1)`.
     """
     p = lf.sample_lf_params()
     
@@ -238,18 +238,66 @@ def generic_params_prior():
     
     # Model the empirical distribution of `samples` with a nonlinear
     # coloring prior using maximum likelihood.
+    nonlinear_coloring = bijectors.fit_nonlinear_coloring_bijector(
+        samples, bounds, seed
+    )
+    
     ndim = len(constants.LF_GENERIC_PARAMS)
     standardnormals = tfd.MultivariateNormalDiag(scale_diag=jnp.ones(ndim))
-    nonlinear_coloring = fit_nonlinear_coloring_bijector(samples, bounds)
+    
     prior = tfd.TransformedDistribution(
         distribution=standardnormals,
         bijector=nonlinear_coloring,
-        name=name
+        name="LFGenericParamsPrior"
     )
-    
+
     return prior
 
 def generic_params_trajectory_prior(
+    num_pitch_periods,
+    envelope_kernel_name=None,
+    envelope_lengthscale=None
+):
+    # Get the marginal (at a given pitch period) means and correlations
+    marginal_prior = generic_params_prior()
+    marginal_mean = marginal_prior.bijector.meta['color']['mean']
+    marginal_tril = marginal_prior.bijector.meta['color']['tril']
+    
+    # FIXME: no need to form cov matrix
+    marginal_K = marginal_tril @ marginal_tril.T
+
+    # Get the envelope (longitudinal) correlations
+    envelope_variance = 1.
+    if envelope_kernel_name is None:
+        envelope_kernel_name = period.MAP_KERNEL
+    if envelope_lengthscale is None:
+        envelope_lengthscale = period.fit_aplawd_z()['scale']
+    
+    envelope_kernel = isokernels.resolve(envelope_kernel_name)(
+        envelope_variance, envelope_lengthscale
+    )
+
+    index_points = jnp.arange(num_pitch_periods).astype(float)[:,None]
+    envelope_K = envelope_kernel.matrix(index_points, index_points)
+
+    # Construct the multivariate normal describing the trajectories in the z domain
+    mean_trajectory, cov_cholesky_trajectory = lf._multivariate_tril_kron(
+        num_pitch_periods, marginal_mean, marginal_K, envelope_K
+    )
+    
+    z_trajectory = tfd.MultivariateNormalTriL(
+        loc=mean_trajectory, scale_tril=cov_cholesky_trajectory
+    )
+    
+    prior = tfd.TransformedDistribution(
+        distribution=z_trajectory,
+        bijector=bijectors.lf_generic_params_trajectory_bijector(num_pitch_periods),
+        name='GenericParamsTrajectoryPrior'
+    )
+    
+    return prior # `prior.sample()` has shape (num_pitch_periods, len(constants.LF_GENERIC_PARAMS))
+
+def __generic_params_trajectory_prior_OLD(
     num_pitch_periods,
     envelope_kernel_name=None,
     envelope_lengthscale=None

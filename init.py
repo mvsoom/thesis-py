@@ -27,6 +27,11 @@ def __cachedir__(s=''):
     return pathlib.Path(os.environ['CACHEDIR']) / s
 
 # Configure joblib's caching mechanism
+# NOTE: joblib cannot cache arbitrary functions, because it cannot
+# hash/pickle all possible input/output values. In particular, it
+# isn't able to memoize functions that return `tfb.Bijector`s or
+# or `tfd.Distribution`s. In practice, therefore, we focus memoization
+# on simple objects such as `Dict`s and `dynesty`'s sampler results.
 import joblib
 __memory__ = joblib.Memory(__cachedir__('joblib'), verbose=2)
 

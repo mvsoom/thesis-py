@@ -1,5 +1,8 @@
+from init import __memory__
+
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 import tensorflow_probability.substrates.jax.distributions as tfd
 import tensorflow_probability.substrates.jax.bijectors as tfb
@@ -8,6 +11,9 @@ import scipy.stats
 import dynesty
 
 from dgf import constants
+
+SAMPLERARGS = {'bound': 'multi', 'sample': 'rslice', 'bootstrap': 10}
+RUNARGS = {'save_bounds': False}
 
 def get_log_stats(samples, bounds):
     """
@@ -56,8 +62,14 @@ def color_bijector_tril(mean, tril):
     scale = tfb.ScaleMatvecTriL(tril)
     return tfb.Chain([shift, scale])
 
-def fit_nonlinear_coloring_bijector(samples, bounds):
+def fit_nonlinear_coloring_bijector(
+    samples, bounds, cacheid, 
+    samplerargs=SAMPLERARGS, runargs=RUNARGS, return_fit_results=False
+):
     """
+    **NOTE:** This function memoizes fit results primarily based on the `cacheid`,
+    NOT on the `samples` and `bounds`! Suppying unique `cacheid`s is ESSENTIAL.
+    
     Fit a **nonlinear coloring bijector** that takes `z ~ N(0, I)` samples
     first through a linear coloring bijector (to get a multivariate Gaussian)
     and then through a nonlinear bijector (to get bounds and exponentiate)
@@ -113,11 +125,23 @@ def fit_nonlinear_coloring_bijector(samples, bounds):
     
     # Run the sampler
     ndim = samples.shape[1]
-    sampler = dynesty.NestedSampler(loglike, ptform, ndim, nlive=ndim*5)
-    sampler.run_nested()
+    if 'nlive' not in samplerargs:
+        samplerargs['nlive'] = ndim*5
+
+    @__memory__.cache
+    def run_nested(cacheid, samplerargs, runargs):
+        seed = cacheid
+        rng = np.random.default_rng(seed)
+        sampler = dynesty.NestedSampler(
+            loglike, ptform, ndim, rstate=rng, **samplerargs
+        )
+        sampler.run_nested(**runargs)
+        return sampler.results
+    
+    results = run_nested(cacheid, samplerargs, runargs)
     
     # Get the maximum likelihood fit of the rescaling parameters...
-    s_ML = sampler.results.samples[-1,:]
+    s_ML = results.samples[-1,:]
     
     # ... and use them to create the best bijector `N(0,I)`to `p(samples)`
     tril_ML = rescaled_normal_tril(s_ML)
@@ -139,46 +163,7 @@ def fit_nonlinear_coloring_bijector(samples, bounds):
         }
     }
     
-    return nlc
-
-def nonlinear_coloring_bijector_params(nlc):
-    softclipexp, color = nlc.bijectors
-    exp, softclip = softclipexp.bijectors
-    shift, scale = color.bijectors
-    return {
-        'softclipexp': {
-            'bounds': jnp.vstack(
-                [softclip.parameters['low'], softclip.parameters['high']]
-            ).T,
-            'sigma': softclip.parameters['hinge_softness']
-        },
-        'color': {
-            'mean': shift.parameters['shift'],
-            'tril': scale.parameters['scale_tril'] # cholesky of covariance
-        }
-    }
-
-def fit_nonlinear_coloring_prior(
-    samples,
-    bounds,
-    name='NonlinearColoringPrior'
-):
-    """
-    Model the empirical distribution of `samples` with a nonlinear
-    coloring prior using maximum likelihood. Given `n` samples of `d`
-    variables, `samples` must be shaped `(n, d)` and `bounds` must have
-    shape `(n, 2)` indicating the bounds of the samples in the *original*
-    domain.
-    """
-    ndim = samples.shape[1]
-    standardnormals = tfd.MultivariateNormalDiag(scale_diag=jnp.ones(ndim))
-    nonlinear_coloring = fit_nonlinear_coloring_bijector(samples, bounds)
-    prior = tfd.TransformedDistribution(
-        distribution=standardnormals,
-        bijector=nonlinear_coloring,
-        name=name
-    )
-    return prior
+    return (nlc, results) if return_fit_results else nlc
 
 ############
 
