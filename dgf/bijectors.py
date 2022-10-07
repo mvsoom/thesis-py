@@ -28,7 +28,7 @@ def get_log_stats(samples, bounds):
 
     # Get Gaussian stats
     mean = jnp.mean(samples, axis=0)
-    cov = jnp.cov(samples.T)
+    cov = jnp.atleast_2d(jnp.cov(samples.T))
     sigma = jnp.sqrt(jnp.diag(cov))
     corr = jnp.diag(1/sigma) @ cov @ jnp.diag(1/sigma)
     L_corr = jnp.linalg.cholesky(corr)

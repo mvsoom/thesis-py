@@ -39,38 +39,37 @@ def truncnorm(df, s):
         (bounds[0]-loc)/scale, (bounds[1]-loc)/scale, loc=loc, scale=scale
     )
 
-def fit_holmberg_z(numsamples=10000, seed=4587):
-    """Model the declination time in the z domain based on Holmberg (1988)"""
-    df = pd.concat([read('men'), read('women')])
-
-    # Simulate `Td` using the fact that `Td = U0/Ee` (Fant 1994, p. 1451)
-    rng = np.random.default_rng(seed)
-    U0 = truncnorm(df, 'ac flow (l/s)')
-    Ee = truncnorm(df, 'maximum airflow declination rate (l/s²)')
-    Td = U0.rvs(numsamples, rng)/Ee.rvs(numsamples, rng)*1000 # msec
-    
-    # Convert the `Td` samples to the z domain
-    lower = constants.MIN_DECLINATION_TIME_MSEC
-    upper = constants.MAX_DECLINATION_TIME_MSEC
-    
-    Td_clipped = Td[(lower < Td) & (Td < upper)]
-    z = bijectors.declination_time_bijector().inverse(Td_clipped)
-    
-    # Fit a Gaussian in the z domain
-    Td_mean_z, Td_std_z = np.mean(z), np.std(z)
-    return Td_mean_z, Td_std_z
-
-def declination_time_prior():
+def declination_time_prior(cacheid=45870):
     """Prior for the declination time `Td` in msec based on Holmberg (1988)
     
     The declination `Td` is usually in the range of [0.5 to 1] msec (Fant 1994).
     """
-    Td_mean_z, Td_std_z = fit_holmberg_z()
+    df = pd.concat([read('men'), read('women')])
 
+    # Simulate `Td` using the fact that `Td = U0/Ee` (Fant 1994, p. 1451)
+    rng = np.random.default_rng(cacheid)
+    numsamples = int(1e5)
+    
+    U0 = truncnorm(df, 'ac flow (l/s)')
+    Ee = truncnorm(df, 'maximum airflow declination rate (l/s²)')
+    Td = U0.rvs(numsamples, rng)/Ee.rvs(numsamples, rng)*1000 # msec
+    
+    # Impose bounds
+    lower = constants.MIN_DECLINATION_TIME_MSEC
+    upper = constants.MAX_DECLINATION_TIME_MSEC
+    bounds = np.array([lower, upper])
+    Td_clipped = Td[(lower < Td) & (Td < upper)]
+    
+    # Fit bijector and construct prior
+    bijector = bijectors.fit_nonlinear_coloring_bijector(
+        Td_clipped[:,None], bounds[None,:], cacheid
+    )
+
+    standardnormal = tfd.MultivariateNormalDiag(scale_diag=jnp.ones(1))
     prior = tfd.TransformedDistribution(
-        tfd.Normal(Td_mean_z, Td_std_z),
-        bijectors.declination_time_bijector(),
-        name='DeclinationTimePrior'
+        standardnormal,
+        bijector,
+        name='LFDeclinationTimePrior'
     )
     
     return prior

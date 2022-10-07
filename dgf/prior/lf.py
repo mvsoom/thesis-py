@@ -224,7 +224,7 @@ def sample_lf_params(fs=constants.FS_KHZ, numsamples=int(1e5), seed=2387):
 ################################################################################
 # Finally, define the priors based on the fitted distributions in the z domain #
 ################################################################################
-def generic_params_prior(seed=98183):
+def generic_params_prior(cacheid=98183):
     """
     Prior for the generic parameters of the LF model. Running this for the first
     time takes O(1) minutes. Equivalent to `generic_params_trajectory_prior(1)`.
@@ -240,7 +240,7 @@ def generic_params_prior(seed=98183):
     # Model the empirical distribution of `samples` with a nonlinear
     # coloring prior using maximum likelihood.
     nonlinear_coloring = bijectors.fit_nonlinear_coloring_bijector(
-        samples, bounds, seed
+        samples, bounds, cacheid
     )
     
     ndim = len(constants.LF_GENERIC_PARAMS)
