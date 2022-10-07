@@ -15,6 +15,10 @@ import dynesty
 SAMPLERARGS = {}
 RUNARGS = {'save_bounds': False}
 
+def _stabilize(A):
+    n = A.shape[0]
+    return A + jnp.eye(n)*n*jnp.finfo(float).eps
+
 def get_log_stats(samples, bounds):
     """
     Collect Gaussian stats for `samples` in the log domain. If there are
@@ -31,7 +35,7 @@ def get_log_stats(samples, bounds):
     cov = jnp.atleast_2d(jnp.cov(samples.T))
     sigma = jnp.sqrt(jnp.diag(cov))
     corr = jnp.diag(1/sigma) @ cov @ jnp.diag(1/sigma)
-    L_corr = jnp.linalg.cholesky(corr)
+    L_corr = jnp.linalg.cholesky(_stabilize(corr))
     
     logstats = dict(
         samples=samples, bounds=bounds, mean=mean,
@@ -54,13 +58,20 @@ def softclipexp_bijector(bounds, sigma):
 
 def color_bijector(mean, cov):
     """Transform samples from `N(0, I)` to `N(mean, cov)`"""
-    tril = jnp.linalg.cholesky(cov)
+    tril = jnp.linalg.cholesky(_stabilize(cov))
     return color_bijector_tril(mean, tril)
 
 def color_bijector_tril(mean, tril):
     shift = tfb.Shift(mean)
     scale = tfb.ScaleMatvecTriL(tril)
     return tfb.Chain([shift, scale])
+
+def nonlinear_coloring_bijector(mean, tril, bounds, sigma):
+    color = color_bijector_tril(mean, tril)
+    softclipexp = softclipexp_bijector(bounds, sigma)
+    return tfb.Chain([
+        softclipexp, color
+    ])
 
 def fit_nonlinear_coloring_bijector(
     samples, bounds, cacheid, 
@@ -88,11 +99,10 @@ def fit_nonlinear_coloring_bijector(
     rescaling coefficients are of order 1, such that the empirical covariance
     matrix of `log(samples)` is deemed to be a good fit.
     """
+    ndim = samples.shape[1]
+    
     # Collect statistics in the log domain to setup the fit
     logstats = get_log_stats(samples, bounds)
-    
-    # Create the static softclipexp bijector which will not be optimized
-    softclipexp = softclipexp_bijector(logstats['bounds'], logstats['sigma'])
     
     # Define the likelihood function `L(s) = p(samples|s)`
     @jax.jit
@@ -108,14 +118,19 @@ def fit_nonlinear_coloring_bijector(
         """
         return jnp.diag(s*logstats['sigma']) @ logstats['L_corr']
     
-    def getprior(s):
-        mvn = tfd.MultivariateNormalTriL(
-            loc=logstats['mean'],
-            scale_tril=rescaled_normal_tril(s)
+    def get_nonlinear_coloring_bijector(s):
+        return nonlinear_coloring_bijector(
+            logstats['mean'], rescaled_normal_tril(s),
+            logstats['bounds'], logstats['sigma']
         )
+    
+    def getprior(
+        s,
+        standardnormals=tfd.MultivariateNormalDiag(scale_diag=jnp.ones(ndim))
+    ):
         prior = tfd.TransformedDistribution(
-            distribution=mvn,
-            bijector=softclipexp
+            distribution=standardnormals,
+            bijector=get_nonlinear_coloring_bijector(s)
         )
         return prior
     
@@ -127,7 +142,6 @@ def fit_nonlinear_coloring_bijector(
         return rescale_prior.ppf(u)
     
     # Run the sampler and cache results based on `cacheid`
-    ndim = samples.shape[1]
     if 'nlive' not in samplerargs:
         samplerargs['nlive'] = ndim*5
 
@@ -147,14 +161,12 @@ def fit_nonlinear_coloring_bijector(
     s_ML = results.samples[-1,:]
     
     # ... and use them to create the best bijector `N(0,I)`to `p(samples)`
-    tril_ML = rescaled_normal_tril(s_ML)
-    color = color_bijector_tril(logstats['mean'], tril_ML)
-    
-    nlc = tfb.Chain([
-        softclipexp, color
-    ])
+    nlc = get_nonlinear_coloring_bijector(s_ML)
     
     return (nlc, results) if return_fit_results else nlc
+
+# Create this statically to allow `jax.jit()`ing functions that use it
+MATRIX_TRANSPOSE_BIJECTOR = tfb.Transpose(rightmost_transposed_ndims=2)
 
 def nonlinear_coloring_trajectory_bijector(
     nonlinear_coloring_bijector,
@@ -178,6 +190,8 @@ def nonlinear_coloring_trajectory_bijector(
              [A3, B3]]
     
     where `A1 = f1(a1, a2, a3, b1, b2, b3)`, and so on.
+    
+    This function can be `jax.jit()`ed with static args `envelope_kernel_name`, `m`.
     """
     # Pick apart the bijector of the nonlinear coloring prior
     softclipexp, color = nonlinear_coloring_bijector.bijectors
@@ -198,12 +212,8 @@ def nonlinear_coloring_trajectory_bijector(
 
     index_points = jnp.arange(m).astype(float)[:,None]
     
-    def stabilize(A):
-        n = A.shape[0]
-        return A + np.eye(n)*n*np.finfo(float).eps
-    
     envelope_K = envelope_kernel.matrix(index_points, index_points)
-    envelope_tril = jnp.linalg.cholesky(stabilize(envelope_K))
+    envelope_tril = jnp.linalg.cholesky(_stabilize(envelope_K))
 
     # Construct the MVN with Kronecker kernel `k((r,i), (s,j)) = k(r,s) k(i,j)`
     # Note that `chol(A x B) = chol(A) x chol(B)`, where `x` is Kronecker product
@@ -221,11 +231,19 @@ def nonlinear_coloring_trajectory_bijector(
     )
 
     # Transpose such that `softclipexp` can broadcast correctly
-    matrix_transpose = tfb.Transpose(rightmost_transposed_ndims=2)
+    matrix_transpose = MATRIX_TRANSPOSE_BIJECTOR
     
     return tfb.Chain([
         softclipexp, matrix_transpose, reshape, color
     ])
+
+def fit_nonlinear_coloring_trajectory_bijector(
+    nonlinear_coloring_bijector,
+    envelope_kernel_name,
+    envelope_lengthscale,
+    m
+):
+    pass
 
 ############
 
