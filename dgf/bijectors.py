@@ -11,19 +11,21 @@ import tensorflow_probability.substrates.jax.bijectors as tfb
 
 import scipy.stats
 import dynesty
+import itertools
+from functools import partial
 
 SAMPLERARGS = {}
 RUNARGS = {'save_bounds': False}
 
-def _stabilize(A):
+def _stabilize(A, sigma=0., eps=jnp.finfo(float).eps):
     n = A.shape[0]
-    return A + jnp.eye(n)*n*jnp.finfo(float).eps
+    return A + jnp.eye(n)*(n*eps + sigma**2)
 
 def get_log_stats(samples, bounds):
     """
     Collect Gaussian stats for `samples` in the log domain. If there are
-    `n` samples of `d` variables, `samples` must be shaped `(n, d)` and
-    `bounds` must have shape `(d, 2)` indicating the bounds of the samples
+    `b` samples of `n` variables, `samples` must be shaped `(b, n)` and
+    `bounds` must have shape `(n, 2)` indicating the bounds of the samples
     in the *original* domain.
     """
     # Transform variables to log domain in-place
@@ -107,8 +109,7 @@ def fit_nonlinear_coloring_bijector(
     # Define the likelihood function `L(s) = p(samples|s)`
     @jax.jit
     def loglike(s):
-        prior = getprior(s)
-        logprob = jnp.sum(prior.log_prob(samples))
+        logprob = jnp.sum(get_distribution(s).log_prob(samples))
         return logprob
     
     def rescaled_normal_tril(s):
@@ -118,21 +119,20 @@ def fit_nonlinear_coloring_bijector(
         """
         return jnp.diag(s*logstats['sigma']) @ logstats['L_corr']
     
-    def get_nonlinear_coloring_bijector(s):
+    def get_bijector(s):
         return nonlinear_coloring_bijector(
             logstats['mean'], rescaled_normal_tril(s),
             logstats['bounds'], logstats['sigma']
         )
     
-    def getprior(
+    def get_distribution(
         s,
         standardnormals=tfd.MultivariateNormalDiag(scale_diag=jnp.ones(ndim))
     ):
-        prior = tfd.TransformedDistribution(
+        return tfd.TransformedDistribution(
             distribution=standardnormals,
-            bijector=get_nonlinear_coloring_bijector(s)
+            bijector=get_bijector(s)
         )
-        return prior
     
     # Define the prior
     def ptform(
@@ -161,23 +161,23 @@ def fit_nonlinear_coloring_bijector(
     s_ML = results.samples[-1,:]
     
     # ... and use them to create the best bijector `N(0,I)`to `p(samples)`
-    nlc = get_nonlinear_coloring_bijector(s_ML)
+    nlc = get_bijector(s_ML)
     
     return (nlc, results) if return_fit_results else nlc
 
-# Create this statically to allow `jax.jit()`ing functions that use it
-MATRIX_TRANSPOSE_BIJECTOR = tfb.Transpose(rightmost_transposed_ndims=2)
-
+#@partial(jax.jit, static_argnames=("m", "envelope_kernel_name"))
 def nonlinear_coloring_trajectory_bijector(
     nonlinear_coloring_bijector,
+    m,
     envelope_kernel_name,
     envelope_lengthscale,
-    m
+    envelope_noise_sigma=0.
 ):
     """
     Enhance a nonlinear coloring bijector in `R^n` with **trajectory structure**
     expressed as a GP over `m` integer indexes. This bijector takes
     a white noise **vector** `z` shaped `(n*m)` to a **matrix** `X` shaped `(m,n)`.
+    Here `n` is the number of variables, i.e., the number of trajectories.
     
     For example, for `n = 2` and `m = 3`, the bijector takes
     
@@ -190,8 +190,6 @@ def nonlinear_coloring_trajectory_bijector(
              [A3, B3]]
     
     where `A1 = f1(a1, a2, a3, b1, b2, b3)`, and so on.
-    
-    This function can be `jax.jit()`ed with static args `envelope_kernel_name`, `m`.
     """
     # Pick apart the bijector of the nonlinear coloring prior
     softclipexp, color = nonlinear_coloring_bijector.bijectors
@@ -213,7 +211,7 @@ def nonlinear_coloring_trajectory_bijector(
     index_points = jnp.arange(m).astype(float)[:,None]
     
     envelope_K = envelope_kernel.matrix(index_points, index_points)
-    envelope_tril = jnp.linalg.cholesky(_stabilize(envelope_K))
+    envelope_tril = jnp.linalg.cholesky(_stabilize(envelope_K, envelope_noise_sigma))
 
     # Construct the MVN with Kronecker kernel `k((r,i), (s,j)) = k(r,s) k(i,j)`
     # Note that `chol(A x B) = chol(A) x chol(B)`, where `x` is Kronecker product
@@ -231,21 +229,129 @@ def nonlinear_coloring_trajectory_bijector(
     )
 
     # Transpose such that `softclipexp` can broadcast correctly
-    matrix_transpose = MATRIX_TRANSPOSE_BIJECTOR
+    matrix_transpose = tfb.Transpose(rightmost_transposed_ndims=2)
     
     return tfb.Chain([
         softclipexp, matrix_transpose, reshape, color
     ])
 
 def fit_nonlinear_coloring_trajectory_bijector(
-    nonlinear_coloring_bijector,
-    envelope_kernel_name,
-    envelope_lengthscale,
-    m
+    samples, bounds, envelope_kernel_name, cacheid,
+    samplerargs=SAMPLERARGS, runargs=RUNARGS, return_fit_results=False
 ):
-    pass
+    """
+    samples: list of (m, n) shaped arrays
+    bounds: (n, 2) shaped array
+    """
+    
+    # Collect marginal statistics
+    mlogstats = get_log_stats(jnp.vstack(samples), bounds)
+    n = len(mlogstats['mean'])
+    
+    # Organize the `samples` into a list of batches with equal trajectory
+    # lengths `m`. See `loglike_batch()` for the shape of the elements of `batch`.
+    samples = sorted(samples, key=len)
+    batches = [jnp.stack(list(g)) for _, g in itertools.groupby(samples, key=len)]
 
-############
+    #@jax.jit
+    def loglike(x):
+        logprob = np.sum([loglike_batch(x, batch) for batch in batches])
+        return logprob
+    
+    #@jax.jit
+    def loglike_batch(x, batch):
+        """
+        Calculate the log likelihood of a `batch` shaped `(b, m, n)` where
+            b: Batch length (number of samples with trajectory length of `m`)
+            m: Trajectory length
+            n: Amount of marginal variables (equal to the global `n`)
+        """
+        b, m, n = batch.shape # del b, n
+        
+        # jitting fails at jitting log_prob because of a bug in TF probability
+        # using Transpose.forward()
+        #logprob = jnp.sum(get_distribution(x, m).log_prob(batch))
+        
+        #####
+        d = get_distribution(x, m)
+        logprob = jnp.sum(d.log_prob(batch))
+        del d
+        #print(m, b, x, '\t', logprob)
+        ######
+        
+        return logprob
+
+    #@jax.jit # works
+    def rescaled_normal_tril(s):
+        """
+        Get `cholesky(Sigma(s))` where `Sigma(s)` is the rescaled
+        covariance matrix by the rescaling factors `s`
+        """
+        return jnp.diag(s*mlogstats['sigma']) @ mlogstats['L_corr']
+
+    #@jax.jit # works
+    def unpack(x):
+        return x[:n], x[n], x[n+1]
+
+    #@partial(jax.jit, static_argnames=("m"))
+    def get_bijector(x, m):
+        s, envelope_lengthscale, envelope_noise_sigma = unpack(x)
+        
+        marginal_bijector = nonlinear_coloring_bijector(
+            mlogstats['mean'], rescaled_normal_tril(s),
+            mlogstats['bounds'], mlogstats['sigma']
+        )
+        
+        return nonlinear_coloring_trajectory_bijector(
+            marginal_bijector,
+            m,
+            envelope_kernel_name,
+            envelope_lengthscale,
+            envelope_noise_sigma,
+        )
+    
+    #@partial(jax.jit, static_argnames=("m")) # works
+    def get_standardnormals(m):
+        return tfd.MultivariateNormalDiag(scale_diag=jnp.ones(n*m))
+    
+    @partial(jax.jit, static_argnames=("m")) # works
+    def get_distribution(x, m):
+        return tfd.TransformedDistribution(
+            distribution=get_standardnormals(m),
+            bijector=get_bijector(x, m)
+        )
+    
+    # Define the prior
+    def ptform(
+        u,
+        rescale_prior=scipy.stats.expon(scale=1.),
+        envelope_lengthscale_prior=scipy.stats.lognorm(np.log(10)),
+        envelope_noise_sigma_prior=scipy.stats.lognorm(np.log(10))
+    ):
+        us = unpack(u)
+        return np.array([
+            *rescale_prior.ppf(us[0]),
+            envelope_lengthscale_prior.ppf(us[1]),
+            envelope_noise_sigma_prior.ppf(us[2])
+        ])
+    
+    # Run the sampler and cache results based on `cacheid`
+    ndim = n + 2
+    if 'nlive' not in samplerargs:
+        samplerargs['nlive'] = ndim*5
+
+    @__memory__.cache
+    def run_nested(cacheid, samplerargs, runargs):
+        seed = cacheid
+        rng = np.random.default_rng(seed)
+        sampler = dynesty.NestedSampler(
+            loglike, ptform, ndim, rstate=rng, **samplerargs
+        )
+        sampler.run_nested(**runargs)
+        return sampler.results
+    
+    results = run_nested(cacheid, samplerargs, runargs)
+    return results
 
 def bounded_exp_bijector(low, high, eps = 1e-5, hinge_factor=0.01):
     """

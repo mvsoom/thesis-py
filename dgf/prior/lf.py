@@ -272,9 +272,9 @@ def generic_params_trajectory_prior(
     # Get the corresponding bijector from white noise vector to trajectory matrix
     bijector = bijectors.nonlinear_coloring_trajectory_bijector(
         nonlinear_coloring_bijector,
+        num_pitch_periods,
         envelope_kernel_name,
-        envelope_lengthscale,
-        num_pitch_periods
+        envelope_lengthscale
     )
     
     # Get the white noise distribution

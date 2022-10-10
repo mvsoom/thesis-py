@@ -15,6 +15,7 @@ import warnings
 import itertools
 import scipy.stats
 import time
+import random
 
 MIN_NUM_PERIODS = 3
 MAP_KERNEL = 'Matern32Kernel' # Kernel with highest evidence for APLAWD
@@ -63,15 +64,10 @@ def yield_training_pairs(
     markings,
     min_period_length_msec,
     max_period_length_msec,
-    min_num_periods, # Reject a voiced group if it has less than `min_num_periods` pitch periods
-    rng=None
+    min_num_periods # Reject a voiced group if it has less than `min_num_periods` pitch periods
 ):
     """Yield all training pairs consisting of the true and Praat-estimated pitch periods in msec"""
-    keys = recordings.keys()
-    if rng is not None:
-        rng.shuffle(keys)
-    
-    for key in keys:
+    for key in recordings.keys():
         k, m = load_recording_and_markers(recordings, markings, key)
         if m is None:
             # Only a few dozen
@@ -129,11 +125,12 @@ def yield_training_pairs(
             yield true_periods, praat_periods
 
 @__memory__.cache
-def get_aplawd_training_pairs():
+def get_aplawd_training_pairs(cacheid=18796):
     """
-    Get the training pairs from the APLAWD database; both constrained and transformed to the
-    unconstrained z-domain. A training pairs consists of (1) the ground truth pitch periods
-    derived from the manually verified GCI markings and (2) the pitch periods as estimated
+    Get the training pairs from the APLAWD database.
+    
+    A training pair consists of (1) the ground truth pitch periods derived from the
+    manually verified GCI markings and (2) the pitch periods as estimated
     from Praat's pulses. The latter (2) is aligned as closely as possible to (1).
     """
     # Get the recordings and the GCI markings
@@ -144,22 +141,30 @@ def get_aplawd_training_pairs():
     training_pairs = list(yield_training_pairs(
         recordings,
         markings,
-        constants.MIN_PERIOD_LENGTH_MSEC,
-        constants.MAX_PERIOD_LENGTH_MSEC,
+        constants.MIN_PERIOD_LENGTH_MSEC + constants._ZERO,
+        constants.MAX_PERIOD_LENGTH_MSEC - constants._ZERO,
         MIN_NUM_PERIODS
     ))
 
-    # Transform the pitch periods to the z-domain
-    def inverse_period_bijector(x):
-        return np.array(bijectors.period_bijector().inverse(x))
+    return training_pairs
 
-    training_pairs_z = [
-        (inverse_period_bijector(true_periods), inverse_period_bijector(praat_periods))
-        for true_periods, praat_periods in training_pairs
-    ]
+def get_aplawd_training_pairs_subset(
+    subset_size=5000,
+    max_num_periods=100,
+    seed=411489
+):
+    """Select a subset of the training pairs with a max number of pitch periods"""
+    training_pairs = get_aplawd_training_pairs()
 
-    return training_pairs, training_pairs_z
-    
+    random.seed(seed)
+    subset = random.choices(
+        list(
+            filter(lambda s: len(s[0]) <= max_num_periods, training_pairs)
+        ), k=subset_size
+    )
+
+    return subset
+
 @__memory__.cache
 def model_true_pitch_periods(
     kernel_name,
@@ -275,7 +280,7 @@ def fit_aplawd_z():
         'sigma': sigma,
         'scale': scale,
         'noise_sigma': noise_sigma,
-        'praat_sigma': praat_sigma
+        'praat_sigma': float(praat_sigma)
     }
 
 def trajectory_prior(num_pitch_periods=None, praat_estimate=None):
