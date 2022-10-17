@@ -17,7 +17,7 @@ from functools import partial
 SAMPLERARGS = {}
 RUNARGS = {'save_bounds': False}
 
-def _stabilize(A, sigma=0., eps=jnp.finfo(float).eps):
+def stabilize(A, sigma=0., eps=jnp.finfo(float).eps):
     n = A.shape[0]
     return A + jnp.eye(n)*(n*eps + sigma**2)
 
@@ -37,7 +37,7 @@ def get_log_stats(samples, bounds):
     cov = jnp.atleast_2d(jnp.cov(samples.T))
     sigma = jnp.sqrt(jnp.diag(cov))
     corr = jnp.diag(1/sigma) @ cov @ jnp.diag(1/sigma)
-    L_corr = jnp.linalg.cholesky(_stabilize(corr))
+    L_corr = jnp.linalg.cholesky(stabilize(corr))
     
     logstats = dict(
         samples=samples, bounds=bounds, mean=mean,
@@ -60,7 +60,7 @@ def softclipexp_bijector(bounds, sigma):
 
 def color_bijector(mean, cov):
     """Transform samples from `N(0, I)` to `N(mean, cov)`"""
-    tril = jnp.linalg.cholesky(_stabilize(cov))
+    tril = jnp.linalg.cholesky(stabilize(cov))
     return color_bijector_tril(mean, tril)
 
 def color_bijector_tril(mean, tril):
@@ -211,7 +211,7 @@ def nonlinear_coloring_trajectory_bijector(
     index_points = jnp.arange(m).astype(float)[:,None]
     
     envelope_K = envelope_kernel.matrix(index_points, index_points)
-    envelope_tril = jnp.linalg.cholesky(_stabilize(envelope_K, envelope_noise_sigma))
+    envelope_tril = jnp.linalg.cholesky(stabilize(envelope_K, envelope_noise_sigma))
 
     # Construct the MVN with Kronecker kernel `k((r,i), (s,j)) = k(r,s) k(i,j)`
     # Note that `chol(A x B) = chol(A) x chol(B)`, where `x` is Kronecker product
@@ -235,6 +235,20 @@ def nonlinear_coloring_trajectory_bijector(
         softclipexp, matrix_transpose, reshape, color
     ])
 
+def list_to_batches(samples):
+    """
+    Convert list of samples of `n` variables shaped `(m, n)` where `m` varies
+    to a list of "batch" arrays shaped `(b, m, n)` where `b` is batch size for
+    samples of length `m`, and where `b` and `m` vary.
+    """
+    samples = sorted(samples, key=len)
+    batches = [jnp.stack(list(g)) for _, g in itertools.groupby(samples, key=len)]
+    return batches
+
+def batches_to_list(batches):
+    """Inverse of `list_to_batches()`"""
+    return [sample[0,:] for batch in batches for sample in jnp.split(batch, len(batch))]
+
 def fit_nonlinear_coloring_trajectory_bijector(
     samples, bounds, envelope_kernel_name, cacheid,
     samplerargs=SAMPLERARGS, runargs=RUNARGS, return_fit_results=False
@@ -248,17 +262,15 @@ def fit_nonlinear_coloring_trajectory_bijector(
     mlogstats = get_log_stats(jnp.vstack(samples), bounds)
     n = len(mlogstats['mean'])
     
-    # Organize the `samples` into a list of batches with equal trajectory
-    # lengths `m`. See `loglike_batch()` for the shape of the elements of `batch`.
-    samples = sorted(samples, key=len)
-    batches = [jnp.stack(list(g)) for _, g in itertools.groupby(samples, key=len)]
+    # Organize the `samples` into a list of batches with equal
+    # trajectory lengths `m` for vectorized computation
+    batches = list_to_batches(samples)
 
-    #@jax.jit
     def loglike(x):
         logprob = np.sum([loglike_batch(x, batch) for batch in batches])
         return logprob
     
-    #@jax.jit
+    @jax.jit
     def loglike_batch(x, batch):
         """
         Calculate the log likelihood of a `batch` shaped `(b, m, n)` where
@@ -267,21 +279,9 @@ def fit_nonlinear_coloring_trajectory_bijector(
             n: Amount of marginal variables (equal to the global `n`)
         """
         b, m, n = batch.shape # del b, n
-        
-        # jitting fails at jitting log_prob because of a bug in TF probability
-        # using Transpose.forward()
-        #logprob = jnp.sum(get_distribution(x, m).log_prob(batch))
-        
-        #####
-        d = get_distribution(x, m)
-        logprob = jnp.sum(d.log_prob(batch))
-        del d
-        #print(m, b, x, '\t', logprob)
-        ######
-        
+        logprob = jnp.sum(get_distribution(x, m).log_prob(batch))
         return logprob
 
-    #@jax.jit # works
     def rescaled_normal_tril(s):
         """
         Get `cholesky(Sigma(s))` where `Sigma(s)` is the rescaled
@@ -289,11 +289,9 @@ def fit_nonlinear_coloring_trajectory_bijector(
         """
         return jnp.diag(s*mlogstats['sigma']) @ mlogstats['L_corr']
 
-    #@jax.jit # works
     def unpack(x):
         return x[:n], x[n], x[n+1]
 
-    #@partial(jax.jit, static_argnames=("m"))
     def get_bijector(x, m):
         s, envelope_lengthscale, envelope_noise_sigma = unpack(x)
         
@@ -310,11 +308,9 @@ def fit_nonlinear_coloring_trajectory_bijector(
             envelope_noise_sigma,
         )
     
-    #@partial(jax.jit, static_argnames=("m")) # works
     def get_standardnormals(m):
         return tfd.MultivariateNormalDiag(scale_diag=jnp.ones(n*m))
     
-    @partial(jax.jit, static_argnames=("m")) # works
     def get_distribution(x, m):
         return tfd.TransformedDistribution(
             distribution=get_standardnormals(m),
@@ -351,7 +347,86 @@ def fit_nonlinear_coloring_trajectory_bijector(
         return sampler.results
     
     results = run_nested(cacheid, samplerargs, runargs)
-    return results
+    
+    # Get the maximum likelihood fit...
+    x_ML = results.samples[-1,:]
+    
+    # ... and use them to create the best bijector `N(0,I)`to `p(samples|m)`
+    def Bijector(m):
+        return get_bijector(x_ML, m)
+    
+    return (Bijector, results) if return_fit_results else Bijector
+
+def condition_nonlinear_coloring_trajectory_bijector(
+    nonlinear_coloring_trajectory_bijector,
+    observation,
+    observation_noise_sigma
+):
+    """
+    The observation noise is equal for each entry of the matrix-variate
+    observation
+    """
+    # This is the dumb way of implementing which will fail rapdily for n > 1
+    # TODO: There is a much faster way: Stegle2011 eq. 5
+    softclipexp, matrix_transpose, reshape, color = nonlinear_coloring_trajectory_bijector.bijectors
+    
+    shift, tril = color.bijectors
+
+    mu = shift.parameters['shift']
+    L = tril.parameters['scale_tril']
+    K = L @ L.T
+    Ki = jnp.linalg.inv(stabilize(K, observation_noise_sigma))
+    
+    inv = tfb.Chain([
+        softclipexp, matrix_transpose, reshape
+    ]).inverse
+    
+    muc = K @ Ki @ inv(observation)
+    Kc = K @ (jnp.eye(K.shape[0]) - Ki @ K) # = K - K @ Ki @ K
+    
+    return tfb.Chain([
+        softclipexp, matrix_transpose, reshape, color_bijector(muc, Kc)
+    ])
+
+def condition_nonlinear_coloring_trajectory_bijector2(
+    nonlinear_coloring_trajectory_bijector,
+    observation,
+    observation_noise_cov
+):
+    """
+    The observation noise is equal for each entry of the matrix-variate
+    observation
+    """
+    # This is the dumb way of implementing which will fail rapdily for n > 1
+    # TODO: There is a much faster way: Stegle2011 eq. 5
+    softclipexp, matrix_transpose, reshape, color = nonlinear_coloring_trajectory_bijector.bijectors
+    
+    shift, tril = color.bijectors
+
+    mu = shift.parameters['shift']
+    L = tril.parameters['scale_tril']
+    K = L @ L.T
+    
+    m = observation.shape[0]
+    C = jnp.kron(observation_noise_cov, jnp.eye(m))
+    
+    Ki = jnp.linalg.inv(K + C)
+    
+    print(np.linalg.cond(stabilize(K)))
+    print(np.linalg.cond(Ki))
+    
+    #import ipdb; ipdb.set_trace()
+    
+    inv = tfb.Chain([
+        softclipexp, matrix_transpose, reshape
+    ]).inverse
+    
+    muc = K @ Ki @ inv(observation)
+    Kc = K @ (jnp.eye(K.shape[0]) - Ki @ K) # = K - K @ Ki @ K
+    
+    return tfb.Chain([
+        softclipexp, matrix_transpose, reshape, color_bijector(muc, Kc)
+    ])
 
 def bounded_exp_bijector(low, high, eps = 1e-5, hinge_factor=0.01):
     """

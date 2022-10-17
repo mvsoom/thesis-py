@@ -8,14 +8,16 @@ from dgf import constants
 
 import tensorflow_probability.substrates.jax.distributions as tfd
 
+import jax
+import jax.numpy as jnp
 import numpy as np
-import dynesty
+
 import parselmouth
-import warnings
 import itertools
 import scipy.stats
 import time
 import random
+import warnings
 
 MIN_NUM_PERIODS = 3
 MAP_KERNEL = 'Matern32Kernel' # Kernel with highest evidence for APLAWD
@@ -165,6 +167,92 @@ def get_aplawd_training_pairs_subset(
 
     return subset
 
+def fit_praat_estimation_sigma():
+    """Maximum likelihood fit of Praat's observation error's sigma"""
+    
+    # FIXME
+    subset = get_aplawd_training_pairs_subset()
+    true_samples  = [d[0][:,None] for d in subset]
+    praat_samples = [d[1][:,None] for d in subset]
+
+    bounds = jnp.array([
+        constants.MIN_PERIOD_LENGTH_MSEC,
+        constants.MAX_PERIOD_LENGTH_MSEC
+    ])[None,:]
+    
+    _bijector = bijectors.fit_nonlinear_coloring_trajectory_bijector(
+        true_samples, bounds, "Matern32Kernel", 34180
+    )
+    
+    if 0:
+    
+        def invert(batches):
+            for batch in batches:
+                b, m, n = batch.shape
+                yield jnp.atleast_3d(_bijector(m).inverse(batch)) # (b, m, 1)
+
+        def invert_samples(samples):
+            batches = bijectors.list_to_batches(samples)
+            return bijectors.batches_to_list(invert(batches))
+
+        z_true = jnp.vstack(invert_samples(true_samples))
+        z_praat = jnp.vstack(invert_samples(praat_samples))
+        
+        return z_true, z_praat
+
+        return jnp.std(z_true - z_praat, axis=0).squeeze()
+    
+    # Transform the samples to ~ N(mu, Sigma) and estimate sigma
+    # It is possible to transform to ~ N(0,1) and estimate sigma there
+    # so that we can avoid picking apart the fitted bijector, but this
+    # is much less efficient that just manually doing it
+    softclipexp, matrix_transpose, reshape, color = _bijector(1).bijectors
+    inv = softclipexp.inverse
+    true = jnp.vstack(true_samples)
+    praat = jnp.vstack(praat_samples)
+    
+    praat_estimation_sigma = jnp.std(inv(true) - inv(praat), axis=0)
+    return praat_estimation_sigma.squeeze()
+
+def pitch_trajectory_prior(
+    num_pitch_periods,
+    praat_estimate=None
+):
+    """A GP prior for pitch period trajectories based on the APLAWD database"""
+    
+    # FIXME
+    subset = get_aplawd_training_pairs_subset()
+    true_samples  = [d[0][:,None] for d in subset]
+    praat_samples = [d[1][:,None] for d in subset]
+
+    bounds = jnp.array([
+        constants.MIN_PERIOD_LENGTH_MSEC,
+        constants.MAX_PERIOD_LENGTH_MSEC
+    ])[None,:]
+    
+    _bijector = bijectors.fit_nonlinear_coloring_trajectory_bijector(
+        true_samples, bounds, "Matern32Kernel", 34180
+    )
+    
+    bijector = _bijector(num_pitch_periods)
+    
+    if praat_estimate is None:
+        name = 'PitchTrajectoryPrior'
+    else:
+        name = 'ConditionedPitchTrajectoryPrior'
+        
+        # Should condition in nonlinear_coloring_trajectory_bijector()
+    
+    standardnormals = tfd.MultivariateNormalDiag(scale_diag=jnp.ones(num_pitch_periods))
+    
+    prior = tfd.TransformedDistribution(
+        distribution=standardnormals,
+        bijector=bijector,
+        name=name
+    )
+    
+    return prior
+
 @__memory__.cache
 def model_true_pitch_periods(
     kernel_name,
@@ -260,6 +348,7 @@ def model_praat_pitch_periods(
     return sampler.results
 
 def posterior_mean_point_estimate(results):
+    import dynesty
     weights = np.exp(results.logwt - results.logz[-1])
     mu, cov = dynesty.utils.mean_and_cov(results.samples, weights)
     del cov

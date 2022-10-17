@@ -25,7 +25,6 @@ debugpy==1.6.0
 decorator==5.1.1
 defusedxml==0.7.1
 dill==0.3.4
-distrax==0.1.2
 dm-tree==0.1.7
 dynesty==1.2.1
 entrypoints==0.4
@@ -52,9 +51,9 @@ ipython==8.2.0
 ipython-genutils==0.2.0
 ipywidgets==7.7.1
 isort==5.10.1
-jax==0.3.17
+jax==0.3.23
 -e git+https://github.com/martiningram/jax_advi.git@a298940fe85876f6aaa58cb9cf21d8ab951d02d2#egg=jax_advi
-jaxlib==0.3.15
+jaxlib==0.3.22
 jaxns==1.1.2
 jaxopt==0.5
 jedi==0.18.1
@@ -72,6 +71,7 @@ jupyterlab-pygments==0.2.2
 jupyterlab-server==2.15.0
 jupyterlab-widgets==1.1.1
 keras==2.10.0
+keras-nightly==2.11.0.dev2022101707
 Keras-Preprocessing==1.1.2
 kiwisolver==1.4.2
 lazy-object-proxy==1.7.1
@@ -143,15 +143,17 @@ sniffio==1.2.0
 snowballstemmer==2.2.0
 soupsieve==2.3.2.post1
 stack-data==0.2.0
+tb-nightly==2.11.0a20221017
 tensorboard==2.10.0
 tensorboard-data-server==0.6.1
 tensorboard-plugin-wit==1.8.1
-tensorflow-cpu==2.10.0
 tensorflow-estimator==2.10.0
 tensorflow-io-gcs-filesystem==0.27.0
-tensorflow-probability==0.18.0
 termcolor==2.0.1
 terminado==0.13.3
+tf-estimator-nightly==2.11.0.dev2022101708
+tf-nightly==2.11.0.dev20221017
+tfp-nightly==0.19.0.dev20221017
 tinycss2==1.1.1
 toml==0.10.2
 tomli==2.0.1
