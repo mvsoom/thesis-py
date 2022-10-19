@@ -7,6 +7,7 @@ from dgf import core
 from dgf import constants
 
 import tensorflow_probability.substrates.jax.distributions as tfd
+import tensorflow_probability.substrates.jax.bijectors as tfb
 
 import jax
 import jax.numpy as jnp
@@ -20,11 +21,6 @@ import random
 import warnings
 
 MIN_NUM_PERIODS = 3
-MAP_KERNEL = 'Matern32Kernel' # Kernel with highest evidence for APLAWD
-HILBERT_EXPANSION_ORDER = 32
-
-SAMPLERARGS = {'nlive': 100, 'bound': 'multi', 'sample': 'rslice', 'bootstrap': 10}
-RUNARGS = {'save_bounds': False}
 
 def load_recording_and_markers(recordings, markings, key):
     k = recordings.load_shifted(key)
@@ -167,257 +163,100 @@ def get_aplawd_training_pairs_subset(
 
     return subset
 
-def fit_praat_estimation_sigma():
-    """Maximum likelihood fit of Praat's observation error's sigma"""
-    
-    # FIXME
+# Cannot be cached due to complex return value
+def fit_period_trajectory_kernel():
+    """Fit Matern kernels to the APLAWD database and return the MAP one"""
     subset = get_aplawd_training_pairs_subset()
-    true_samples  = [d[0][:,None] for d in subset]
-    praat_samples = [d[1][:,None] for d in subset]
+    samples = [d[0][:,None] for d in subset]
 
     bounds = jnp.array([
         constants.MIN_PERIOD_LENGTH_MSEC,
         constants.MAX_PERIOD_LENGTH_MSEC
     ])[None,:]
     
-    _bijector = bijectors.fit_nonlinear_coloring_trajectory_bijector(
-        true_samples, bounds, "Matern32Kernel", 34180
-    )
+    def fit(kernel_name, cacheid):
+        bijector, results = bijectors.fit_nonlinear_coloring_trajectory_bijector(
+            samples, bounds, kernel_name, cacheid, return_fit_results=True
+        )
+        return kernel_name, bijector, results
     
-    if 0:
+    kernel_fits = [
+        fit("Matern12Kernel", 19863),
+        fit("Matern32Kernel", 11279), # Spoiler: this has highest evidence
+        fit("Matern52Kernel", 54697),
+        fit("SqExponentialKernel", 79543)
+    ]
     
-        def invert(batches):
-            for batch in batches:
-                b, m, n = batch.shape
-                yield jnp.atleast_3d(_bijector(m).inverse(batch)) # (b, m, 1)
-
-        def invert_samples(samples):
-            batches = bijectors.list_to_batches(samples)
-            return bijectors.batches_to_list(invert(batches))
-
-        z_true = jnp.vstack(invert_samples(true_samples))
-        z_praat = jnp.vstack(invert_samples(praat_samples))
-        
-        return z_true, z_praat
-
-        return jnp.std(z_true - z_praat, axis=0).squeeze()
+    def logz(fit_result):
+        kernel_name, bijector, results = fit_result
+        return results.logz[-1]
     
-    # Transform the samples to ~ N(mu, Sigma) and estimate sigma
-    # It is possible to transform to ~ N(0,1) and estimate sigma there
-    # so that we can avoid picking apart the fitted bijector, but this
-    # is much less efficient that just manually doing it
-    softclipexp, matrix_transpose, reshape, color = _bijector(1).bijectors
-    inv = softclipexp.inverse
-    true = jnp.vstack(true_samples)
-    praat = jnp.vstack(praat_samples)
-    
-    praat_estimation_sigma = jnp.std(inv(true) - inv(praat), axis=0)
-    return praat_estimation_sigma.squeeze()
+    best_fit = max(*kernel_fits, key=lambda fit_result: logz(fit_result))
+    return best_fit # == (kernel_name, bijector, results)
 
-def pitch_trajectory_prior(
+def fit_period_trajectory_bijector(
+    num_pitch_periods=None
+):
+    kernel_name, bijector, results = fit_period_trajectory_kernel()
+    del kernel_name, results
+    
+    if num_pitch_periods is not None:
+        bijector = bijector(num_pitch_periods)
+
+    return bijector
+
+def fit_praat_estimation_cov():
+    subset = get_aplawd_training_pairs_subset()
+    true_samples  = [d[0][:,None] for d in subset]
+    praat_samples = [d[1][:,None] for d in subset]
+    
+    b = fit_period_trajectory_bijector(1)
+    cov = bijectors.estimate_observation_noise_cov(b, true_samples, praat_samples)
+    return cov
+    
+def fit_praat_estimation_sigma():
+    """Maximum likelihood fit of Praat's observation error's sigma"""
+    return jnp.sqrt(fit_praat_estimation_cov()).squeeze()
+
+def maximum_likelihood_envelope_params(results):
+    s, envelope_lengthscale, envelope_noise_sigma = results.samples[-1]
+    del s
+    return envelope_lengthscale, envelope_noise_sigma
+
+def period_trajectory_prior(
     num_pitch_periods,
     praat_estimate=None
 ):
-    """A GP prior for pitch period trajectories based on the APLAWD database"""
-    
-    # FIXME
-    subset = get_aplawd_training_pairs_subset()
-    true_samples  = [d[0][:,None] for d in subset]
-    praat_samples = [d[1][:,None] for d in subset]
-
-    bounds = jnp.array([
-        constants.MIN_PERIOD_LENGTH_MSEC,
-        constants.MAX_PERIOD_LENGTH_MSEC
-    ])[None,:]
-    
-    _bijector = bijectors.fit_nonlinear_coloring_trajectory_bijector(
-        true_samples, bounds, "Matern32Kernel", 34180
-    )
-    
-    bijector = _bijector(num_pitch_periods)
+    """
+    A GP prior based on the APLAWD database for pitch period trajectories
+    of length `num_pitch_periods`, possibly conditioned on `praat_estimate`,
+    which must be an array shaped `(num_pitch_periods,)`. The prior returns
+    samples shaped `(num_pitch_periods,)`.
+    """
+    bijector = fit_period_trajectory_bijector(num_pitch_periods)
     
     if praat_estimate is None:
-        name = 'PitchTrajectoryPrior'
+        name = 'PeriodTrajectoryPrior'
     else:
-        name = 'ConditionedPitchTrajectoryPrior'
-        
-        # Should condition in nonlinear_coloring_trajectory_bijector()
+        name = 'ConditionedPeriodTrajectoryPrior'
+        bijector = bijectors.condition_nonlinear_coloring_trajectory_bijector(
+            bijector, praat_estimate[:,None], fit_praat_estimation_cov()
+        )
     
     standardnormals = tfd.MultivariateNormalDiag(scale_diag=jnp.ones(num_pitch_periods))
     
+    # Squeeze out the last dimension in `(m,n)` since `n == 1`
+    squeeze_bijector = tfb.Chain([
+        tfb.Reshape(event_shape_out=(-1,), event_shape_in=(-1, 1)),
+        bijector
+    ])
+    
     prior = tfd.TransformedDistribution(
         distribution=standardnormals,
-        bijector=bijector,
+        bijector=squeeze_bijector,
         name=name
     )
-    
     return prior
 
-@__memory__.cache
-def model_true_pitch_periods(
-    kernel_name,
-    kernel_M=HILBERT_EXPANSION_ORDER,
-    seed=7498,
-    samplerargs=SAMPLERARGS,
-    runargs=RUNARGS
-):
-    """
-    Model the 'true' APLAWD pitch periods transformd to the z domain by a standard Hilbert GP
-    parametrized by a `kernel_name` kernel with `kernel_M` basis functions, a constant mean,
-    variance, lengthscale and noise (nugget) variance.
-    """
-    rng = np.random.default_rng(seed)
-    
-    _, training_pairs_z = get_aplawd_training_pairs()
-    kernel = isokernels.resolve(kernel_name)
-
-    def loglike(x):
-        return np.sum([loglike_true_model(x, pair) for pair in training_pairs_z])
-
-    def loglike_true_model(x, pair):
-        mean, sigma, scale, noise_sigma = x
-        var = sigma**2
-        noise_power = noise_sigma**2
-
-        true_z, _ = pair
-        z = true_z - mean
-
-        if len(z) > kernel_M:
-            L = core.loglikelihood_hilbert_grid(
-                kernel, var, scale, kernel_M, z, noise_power
-            )
-        else:
-            t = np.arange(len(z))
-            R = core.kernelmatrix_root_hilbert(kernel, var, scale, t, kernel_M, t[-1])
-            L = core.loglikelihood_hilbert(R, z, noise_power)
-
-        # Can return nan if lengthscale is too large
-        return -np.inf if np.isnan(L) else L
-
-    def ptform(u):
-        # All parameters have LogNormal(0, 1) priors, i.e., they are all positive and O(1)
-        z = scipy.stats.norm.ppf(u)
-        return np.exp(z)
-
-    sampler = dynesty.NestedSampler(
-        loglike, ptform, ndim=4, rstate=rng, **samplerargs
-    )
-    sampler.run_nested(**runargs)
-    return sampler.results
-
-@__memory__.cache
-def model_praat_pitch_periods(
-    seed=3176,
-    samplerargs=SAMPLERARGS,
-    runargs=RUNARGS
-):
-    """
-    Model the pitch periods as estimated by Praat as the 'true' APLAWD pitch periods
-    transformed to the z domain plus a constant error term.
-    """
-    rng = np.random.default_rng(seed)
-    
-    _, training_pairs_z = get_aplawd_training_pairs()
-    
-    def loglike(x):
-        return np.sum([loglike_praat_model(x, pair) for pair in training_pairs_z])
-
-    def loglike_praat_model(praat_sigma, pair):
-        # Praat observation model is `L = N(praat_z | true_z, praat_sigma²*I)`
-        true_z, praat_z = pair
-
-        d = praat_z - true_z
-        bilinear_term = np.dot(d, d)/(praat_sigma**2)
-
-        N = len(praat_z)
-        order_term = N*np.log(2*np.pi*praat_sigma**2)
-
-        L = -order_term/2 - bilinear_term/2
-        return L
-
-    def ptform(u):
-        # The prior for `praat_sigma` is a LogNormal(0, 1) priors
-        z = scipy.stats.norm.ppf(u)
-        praat_sigma = np.exp(z)
-        return praat_sigma
-    
-    sampler = dynesty.NestedSampler(
-        loglike, ptform, ndim=1, rstate=rng, **samplerargs
-    )
-    sampler.run_nested(**runargs)
-    return sampler.results
-
-def posterior_mean_point_estimate(results):
-    import dynesty
-    weights = np.exp(results.logwt - results.logz[-1])
-    mu, cov = dynesty.utils.mean_and_cov(results.samples, weights)
-    del cov
-    return np.squeeze(mu)
-
-def fit_aplawd_z():
-    """Return the fit with highest evidence of APLAWD's period data transfored to the z-domain"""
-    # Get posterior mean estimates of the 'true' pitch periods model with highest evidence
-    true_results = model_true_pitch_periods(MAP_KERNEL)
-    mean, sigma, scale, noise_sigma = posterior_mean_point_estimate(true_results)
-    
-    # Get posterior mean estimate of Praat observation error
-    praat_results = model_praat_pitch_periods()
-    praat_sigma = posterior_mean_point_estimate(praat_results)
-
-    return {
-        'mean': mean,
-        'sigma': sigma,
-        'scale': scale,
-        'noise_sigma': noise_sigma,
-        'praat_sigma': float(praat_sigma)
-    }
-
-def trajectory_prior(num_pitch_periods=None, praat_estimate=None):
-    """A GP prior for pitch period trajectories based on the APLAWD database"""
-    fit_z = fit_aplawd_z()
-    bijector = bijectors.period_bijector()
-    
-    if praat_estimate is not None:
-        if num_pitch_periods is not None:
-            assert num_pitch_periods == len(praat_estimate)
-        else:
-            num_pitch_periods = len(praat_estimate)
-        index_points = np.arange(num_pitch_periods).astype(float)[:,None]
-        observation_index_points = index_points
-        observations = bijector.inverse(praat_estimate)
-        observation_noise_variance = fit_z['noise_sigma']**2 + fit_z['praat_sigma']**2
-        predictive_noise_variance = 0.
-    else:
-        if num_pitch_periods is None:
-            num_pitch_periods = 1
-        index_points = np.arange(num_pitch_periods).astype(float)[:,None]
-        observation_index_points = None
-        observations = None
-        observation_noise_variance = fit_z['noise_sigma']**2
-        predictive_noise_variance = 0.
-
-    map_kernel = isokernels.resolve(MAP_KERNEL)(
-        fit_z['sigma']**2, fit_z['scale']
-    )
-    mean_fn = lambda _: np.array([fit_z['mean']])
-
-    gp = tfd.GaussianProcessRegressionModel(
-        map_kernel,
-        index_points=index_points,
-        observation_index_points=observation_index_points,
-        observations=observations,
-        observation_noise_variance=observation_noise_variance,
-        predictive_noise_variance=predictive_noise_variance,
-        mean_fn=mean_fn
-    )
-
-    prior = tfd.TransformedDistribution(
-        distribution=gp,
-        bijector=bijector,
-        name='PeriodTrajectoryPrior'
-    )
-    
-    return prior
-
-def marginal_prior():
-    return trajectory_prior(num_pitch_periods=1)
+def period_marginal_prior():
+    return period_trajectory_prior(1)

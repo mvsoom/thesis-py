@@ -180,7 +180,7 @@ def sample_lf_params(fs=constants.FS_KHZ, numsamples=int(1e5), seed=2387):
     rng = np.random.default_rng(rng_seed)
 
     # Sample pitch periods and declination times (both in msec)
-    T0 = period.marginal_prior().sample(numsamples, seed=key2)
+    T0 = period.period_marginal_prior().sample(numsamples, seed=key2)
     Td = holmberg.declination_time_prior().sample(numsamples, seed=key3)
     
     # Sample the `R` parameters based on the pitch periods
@@ -257,24 +257,37 @@ def generic_params_prior(cacheid=98183):
 def generic_params_trajectory_prior(
     num_pitch_periods,
     envelope_kernel_name=None,
-    envelope_lengthscale=None
+    envelope_lengthscale=None,
+    envelope_noise_sigma=None
 ):
     # Get the marginal (at a given pitch period) means and correlations in
     # terms of the nonlinear coloring bijector
     nonlinear_coloring_bijector = generic_params_prior().bijector
 
     # Get the envelope (longitudinal) correlations
-    if envelope_kernel_name is None:
-        envelope_kernel_name = period.MAP_KERNEL
-    if envelope_lengthscale is None:
-        envelope_lengthscale = period.fit_aplawd_z()['scale']
+    if None in [envelope_kernel_name,
+                envelope_lengthscale,
+                envelope_noise_sigma]:
+        # Default to the latent GP of the period bijector
+        period_kernel_name, _, period_results = \
+            period.fit_period_trajectory_kernel()
+        period_envelope_lengthscale, period_envelope_noise_sigma = \
+            period.maximum_likelihood_envelope_params(period_results)
+        
+        if envelope_kernel_name is None:
+            envelope_kernel_name = period_kernel_name
+        if envelope_lengthscale is None:
+            envelope_lengthscale = period_envelope_lengthscale
+        if envelope_noise_sigma is None:
+            envelope_noise_sigma = period_envelope_noise_sigma
     
     # Get the corresponding bijector from white noise vector to trajectory matrix
     bijector = bijectors.nonlinear_coloring_trajectory_bijector(
         nonlinear_coloring_bijector,
         num_pitch_periods,
         envelope_kernel_name,
-        envelope_lengthscale
+        envelope_lengthscale,
+        envelope_noise_sigma
     )
     
     # Get the white noise distribution
@@ -288,19 +301,6 @@ def generic_params_trajectory_prior(
     )
     
     return prior # `prior.sample()` has shape (num_pitch_periods, len(constants.LF_GENERIC_PARAMS))
-
-def _multivariate_tril_kron(num_pitch_periods, marginal_mean, marginal_K, envelope_K):
-    """Implement a multivariate normal with Kronecker-structured covariance matrix"""
-    mean_trajectory = np.kron(marginal_mean, np.ones(num_pitch_periods))
-
-    def stabilize(A):
-        n = A.shape[0]
-        return A + np.eye(n)*n*np.finfo(float).eps
-
-    marginal_L = np.linalg.cholesky(stabilize(marginal_K))
-    envelope_L = np.linalg.cholesky(stabilize(envelope_K))
-    cov_cholesky_trajectory = np.kron(marginal_L, envelope_L)
-    return mean_trajectory, cov_cholesky_trajectory
 
 def generic_params_to_dict(x, squeeze=False):
     x = jnp.atleast_2d(x)

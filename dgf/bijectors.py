@@ -93,8 +93,8 @@ def fit_nonlinear_coloring_bijector(
     direct maximum likelihood to find a new, rescaled covariance matrix
     that we can use in the log domain to model `samples`.
     
-    `samples` must be shaped `(n, d)` and `bounds` must have shape `(d, 2)` 
-    indicating the bounds of the `d` variables in the *original* domain.
+    `samples` must be shaped `(b, n)` and `bounds` must have shape `(n, 2)` 
+    indicating the bounds of the `n` variables in the *original* domain.
     
     The probability `p(samples|s)` is given by transforming a MVN with the
     `softclipexp` bijector and the prior `p(s) = Exp(1)` expresses that the
@@ -254,10 +254,29 @@ def fit_nonlinear_coloring_trajectory_bijector(
     samplerargs=SAMPLERARGS, runargs=RUNARGS, return_fit_results=False
 ):
     """
-    samples: list of (m, n) shaped arrays
-    bounds: (n, 2) shaped array
-    """
+    **NOTE:** This function memoizes fit results primarily based on the `cacheid`,
+    NOT on the `samples` and `bounds`! Suppying unique `cacheid`s is essential.
     
+    This function works like `fit_nonlinear_coloring_bijector()`, but now
+    an envelope GP with `envelope_kernel_name` is fitted to the samples
+    and a bijector with the maximum likelihood values of the parameters `s`
+    (rescaling factors) and the `envelope_lengthscale` and `envelope_noise_sigma`
+    is returned.
+    
+    The `samples` is a list of observed trajectories of the `n` variables, and
+    can have varying lengths `m` -- thus `samples[0].shape == [m1, n]`,
+    `samples[1].shape == [m2, n]`, etc. The `bounds` are an `(n, 2)` shaped array
+    as in `fit_nonlinear_coloring_bijector()`.
+    
+    The MVN underlying the `samples` has a kernel
+    
+        k([x,i], [y,j]) = k(x,y) k(i,j)
+    
+    and the first kernel is supplied by `fit_nonlinear_coloring_bijector()`;
+    the second integer-indexed kernel is defined by the GP fitted here.
+    This is in effect a Multi-Output GP (also called multi-task GP), where
+    each output (task) in our case is the trajectory of a variable.
+    """
     # Collect marginal statistics
     mlogstats = get_log_stats(jnp.vstack(samples), bounds)
     n = len(mlogstats['mean'])
@@ -357,107 +376,83 @@ def fit_nonlinear_coloring_trajectory_bijector(
     
     return (Bijector, results) if return_fit_results else Bijector
 
-def condition_nonlinear_coloring_trajectory_bijector(
+def estimate_observation_noise_cov(
     nonlinear_coloring_trajectory_bijector,
-    observation,
-    observation_noise_sigma
+    true_samples,
+    observed_samples
 ):
     """
-    The observation noise is equal for each entry of the matrix-variate
-    observation
+    **Note: the covariance is estimate in the "colored domain", i.e., where
+    the samples are assumed MVN or GP.**
+    
+    Estimate the `(n, n)` covariance matrix given a list of `(m, n)` samples
     """
-    # This is the dumb way of implementing which will fail rapdily for n > 1
-    # TODO: There is a much faster way: Stegle2011 eq. 5
+    true_stacked = jnp.vstack(true_samples)
+    observed_stacked = jnp.vstack(observed_samples)
+    
     softclipexp, matrix_transpose, reshape, color = nonlinear_coloring_trajectory_bijector.bijectors
     
-    shift, tril = color.bijectors
+    error = softclipexp.inverse(true_stacked) - softclipexp.inverse(observed_stacked)
 
-    mu = shift.parameters['shift']
-    L = tril.parameters['scale_tril']
-    K = L @ L.T
-    Ki = jnp.linalg.inv(stabilize(K, observation_noise_sigma))
-    
-    inv = tfb.Chain([
-        softclipexp, matrix_transpose, reshape
-    ]).inverse
-    
-    muc = K @ Ki @ inv(observation)
-    Kc = K @ (jnp.eye(K.shape[0]) - Ki @ K) # = K - K @ Ki @ K
-    
-    return tfb.Chain([
-        softclipexp, matrix_transpose, reshape, color_bijector(muc, Kc)
-    ])
+    observation_noise_cov = jnp.cov(error.T)
+    return jnp.atleast_2d(observation_noise_cov)
 
-def condition_nonlinear_coloring_trajectory_bijector2(
+def condition_nonlinear_coloring_trajectory_bijector(
     nonlinear_coloring_trajectory_bijector,
     observation,
     observation_noise_cov
 ):
     """
-    The observation noise is equal for each entry of the matrix-variate
-    observation
+    Condition a given nonlinear coloring trajectory bijector on
+    `observation` (shaped as `(m, n)`) with the observation noise
+    covariance matrix (shaped as `(n, n)`). Here `n` is the number
+    of variables (also known as "tasks" in the multi-output GP literature)
+    and `m` is the trajectory length. This function computes the
+    conditional MVN in [Maddox+ 2021, Eq. 4] in the naieve way `O(m^3 n^3)`,
+    and then returns a new bijector that sends N(0,I) to the conditional
+    MVN. [Maddox+ 2021] show how to sample in `O(m^3 + n^3)` time.
+    
+    Get `observation_noise_cov` from `estimate_observation_noise_cov()`.
     """
-    # This is the dumb way of implementing which will fail rapdily for n > 1
-    # TODO: There is a much faster way: Stegle2011 eq. 5
+    # Pick apart the bijector of the nonlinear coloring prior
     softclipexp, matrix_transpose, reshape, color = nonlinear_coloring_trajectory_bijector.bijectors
     
-    shift, tril = color.bijectors
-
-    mu = shift.parameters['shift']
-    L = tril.parameters['scale_tril']
-    K = L @ L.T
-    
-    m = observation.shape[0]
-    C = jnp.kron(observation_noise_cov, jnp.eye(m))
-    
-    Ki = jnp.linalg.inv(K + C)
-    
-    print(np.linalg.cond(stabilize(K)))
-    print(np.linalg.cond(Ki))
-    
-    #import ipdb; ipdb.set_trace()
-    
-    inv = tfb.Chain([
+    bijector_inverse = tfb.Chain([
         softclipexp, matrix_transpose, reshape
     ]).inverse
     
-    muc = K @ Ki @ inv(observation)
-    Kc = K @ (jnp.eye(K.shape[0]) - Ki @ K) # = K - K @ Ki @ K
+    # Get the underlying Kronecker kernel
+    shift, scale = color.bijectors
+
+    kron_mean = shift.parameters['shift']
+    kron_tril = scale.parameters['scale_tril']
+    kron_K = kron_tril @ kron_tril.T
+    
+    # Shape up the observation noise covariance into the kron domain
+    m = observation.shape[0]
+    kron_C = jnp.kron(observation_noise_cov, jnp.eye(m))
+    
+    # Invert the noise-enhanced kernel
+    K = stabilize(kron_K + kron_C)
+    L, lower = jax.scipy.linalg.cho_factor(K, lower=True)
+    def solve_K(B):
+        """Return `X = K^(-1) B` that solves `K X = B`"""
+        X = jax.scipy.linalg.cho_solve((L, lower), B)
+        return X
+    
+    # Calculate the conditional mean
+    # (Source: [Maddox+ 2021, Eq. 4] with "x_test := X")
+    b = bijector_inverse(observation)
+    kron_conditional_mean = kron_K @ solve_K(b)
+    
+    # Calculate the conditional covariance
+    # (Source: [Maddox+ 2021, Eq. 4] with "x_test := X")
+    I = jnp.eye(kron_K.shape[0])
+    kron_conditional_cov = kron_K @ (I - solve_K(kron_K))
+    
+    # Assemble the bijector
+    color = color_bijector(kron_conditional_mean, kron_conditional_cov)
     
     return tfb.Chain([
-        softclipexp, matrix_transpose, reshape, color_bijector(muc, Kc)
+        softclipexp, matrix_transpose, reshape, color
     ])
-
-def bounded_exp_bijector(low, high, eps = 1e-5, hinge_factor=0.01):
-    """
-    Transform an unbounded real variable to a positive bounded variable in `[low, high]`.
-    To avoid numerical problems when the unbounded variable hits one of the boundaries,
-    the boundaries are made slightly more permissive by a factor `eps`.
-    
-    The hinge softness in the SoftClip is determined automatically as `hinge_factor*low`
-    to prevent scaling issues. (See comment below in the function's source.)
-    """
-    low = jnp.float64(low) * (1 - eps)
-    high = jnp.float64(high) * (1 + eps)
-    
-    # The hinge softness must be smaller than O(low); the default value
-    # `hinge_softness == 1` implies that the range of the constrained
-    # values (i.e., in the forward direction) is O(1). If this is not the
-    # case, the default value will cause numerical problems or prevent the
-    # entire constrained range to be reachable from [-inf, +inf]. You can
-    # check if this is the case by evaluating `b.forward(-inf), b.forward(+inf)`
-    # where `b = bounded_exp_bijector(low, high, hinge_factor)`.
-    hinge_softness = hinge_factor * jnp.abs(low)
-    return tfb.Chain([tfb.SoftClip(low, high, hinge_softness), tfb.Exp()])
-
-def period_bijector():
-    return bounded_exp_bijector(
-        constants.MIN_PERIOD_LENGTH_MSEC,
-        constants.MAX_PERIOD_LENGTH_MSEC
-    )
-
-def declination_time_bijector():
-    return bounded_exp_bijector(
-        constants.MIN_DECLINATION_TIME_MSEC,
-        constants.MAX_DECLINATION_TIME_MSEC
-    )
