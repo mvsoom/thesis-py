@@ -256,7 +256,7 @@ def period_trajectory_prior(
         bijector=squeeze_bijector,
         name=name
     )
-    return prior
+    return prior # prior.sample(n) shaped (n, num_pitch_periods) shaped
 
 def period_marginal_prior():
-    return period_trajectory_prior(1)
+    return period_trajectory_prior(1) # prior.sample(n) shaped (n, 1)

@@ -1,6 +1,5 @@
 """Define the prior over the LF model for the glottal flow derivative"""
 from init import __memory__
-from dgf.prior import lf
 from dgf.prior import period
 from dgf.prior import holmberg
 from dgf import constants
@@ -154,8 +153,8 @@ def sample_R_params(T0, Td, rng):
     p = dict()
     p['T0'] = T0
     p['Td'] = Td
-    p['Re'] = lf.calculate_Re(T0, Td)
-    p['Ra'], p['Rk'], p['Rg'] = lf.sample_R_triple(p['Re'], rng)
+    p['Re'] = calculate_Re(T0, Td)
+    p['Ra'], p['Rk'], p['Rg'] = sample_R_triple(p['Re'], rng)
     return p
 
 def _collect_list_of_dicts(ld):
@@ -180,8 +179,8 @@ def sample_lf_params(fs=constants.FS_KHZ, numsamples=int(1e5), seed=2387):
     rng = np.random.default_rng(rng_seed)
 
     # Sample pitch periods and declination times (both in msec)
-    T0 = period.period_marginal_prior().sample(numsamples, seed=key2)
-    Td = holmberg.declination_time_prior().sample(numsamples, seed=key3)
+    T0 = period.period_marginal_prior().sample(numsamples, seed=key2).squeeze()
+    Td = holmberg.declination_time_prior().sample(numsamples, seed=key3).squeeze()
     
     # Sample the `R` parameters based on the pitch periods
     p = _collect_list_of_dicts([sample_R_params(T, Td, rng) for T, Td in zip(T0, Td)])
@@ -224,12 +223,12 @@ def sample_lf_params(fs=constants.FS_KHZ, numsamples=int(1e5), seed=2387):
 ################################################################################
 # Finally, define the priors based on the fitted distributions in the z domain #
 ################################################################################
-def generic_params_prior(cacheid=98183):
+def generic_params_prior(cacheid=98171):
     """
     Prior for the generic parameters of the LF model. Running this for the first
     time takes O(1) minutes. Equivalent to `generic_params_trajectory_prior(1)`.
     """
-    p = lf.sample_lf_params()
+    p = sample_lf_params()
     
     # Select the `generic` parameters from the collection of LF parameters in `p`
     samples = jnp.vstack([p[v] for v in constants.LF_GENERIC_PARAMS]).T

@@ -72,4 +72,4 @@ def declination_time_prior(cacheid=45870):
         name='LFDeclinationTimePrior'
     )
     
-    return prior
+    return prior # prior.sample(n) returns (n, 1) shaped

@@ -1,4 +1,4 @@
-# Run as `$ source activate`
+# Run as `$ source activate` in project root
 source venv/bin/activate
 
 export PROJECTDIR=$(pwd)
