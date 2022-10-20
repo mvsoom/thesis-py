@@ -1,0 +1,4 @@
+#!/bin/bash
+# Workaround a bug in pip:
+# https://stackoverflow.com/a/40167445/6783015
+pip freeze | grep -v "pkg-resources" > requirements.txt
