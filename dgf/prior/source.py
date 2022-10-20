@@ -18,13 +18,11 @@ import dynesty
 
 MODEL_LF_SAMPLE_PARAMS = ('noise_power', *constants.SOURCE_PARAMS)
 
-RHO = 1. # 100% relative uncertainty like an exponential distribution
-
-SAMPLERARGS = {'nlive': 100, 'bound': 'multi', 'sample': 'rslice', 'bootstrap': 10}
+SAMPLERARGS = {'sample': 'rslice', 'bootstrap': 10}
 RUNARGS = {'save_bounds': False, 'maxcall': int(3e5)}
 
-KERNEL_M = (16, 32, 64, 128, 256)
-KERNEL_NAME = ('Matern12Kernel', 'Matern32Kernel', 'Matern52Kernel', 'SqExponentialKernel')
+KERNEL_MS = (16, 32, 64, 128, 256)
+KERNEL_NAMES = ('Matern12Kernel', 'Matern32Kernel', 'Matern52Kernel', 'SqExponentialKernel')
 
 def _determine_GCI_index(t, u, Te, treshold):
     mask = (t > Te) & (np.abs(u) < treshold)
@@ -47,7 +45,7 @@ def closed_phase_leading(t, u, p, treshold, offset=0.):
 
 def _sample_and_log_prob_xt(rng):
     # Sample and get probability of `generic` LF parameters...
-    prior = lf.generic_params_marginal_prior()
+    prior = lf.generic_params_prior()
     xg, log_prob_xg = prior.experimental_sample_and_log_prob(
         seed=jax.random.PRNGKey(rng.integers(int(1e4)))
     )
@@ -144,73 +142,29 @@ def sample_and_logprob_q(fs, T, rng):
 
 @__memory__.cache
 def get_lf_samples(
-    num_samples=30,
+    num_samples=50,
     fs=constants.FS_KHZ,
     T=None,
     seed=4879
 ):
     rng = np.random.default_rng(seed)
-    samples = []
-    while num_samples > 0:
+    
+    def sample():
         p, t, u, log_prob_u = sample_and_logprob_q(fs, T, rng)
         sample = dict(p=p, t=t, u=u, log_prob_u=log_prob_u)
-        
-        if np.isfinite(log_prob_u) and not np.any(np.isnan(u)):
-            samples.append(sample)
-            num_samples -= 1
-        else:
-            warnings.warn(f'Invalid LF sample: {sample}')
-
+        return sample
+    
+    samples = [sample() for _ in range(num_samples)]
     return samples
 
-def _log_truncnorm(lower, upper, median, rho):
-    """
-    Given the `lower` and `upper` bounds, the `median` and the approximate
-    relative uncertainty `rho` of `Y`, where `Y = exp(X)` and `X ~ TruncatedNormal(...)`,
-    calculate and return the corresponding underlying TruncatedNormal distribution
-    
-    Here `rho ~= (std of Y)/(mean of Y)` is the relative uncertainty.
-    """
-    l = np.log(lower)
-    u = np.log(upper)
-    m = np.log(median)
-
-    a = (l - m)/rho
-    b = (u - m)/rho
-    return scipy.stats.truncnorm(a, b, m, rho)
-
-def _get_source_params_ppf(source_bounds, source_median, rho):
-    lower = [source_bounds[k][0] for k in constants.SOURCE_PARAMS]
-    upper = [source_bounds[k][1] for k in constants.SOURCE_PARAMS]
-    median = [source_median[k] for k in constants.SOURCE_PARAMS]
-    
-    log_truncnorm = _log_truncnorm(lower, upper, median, rho)
-    
-    def source_params_ppf(u):
-        return np.exp(log_truncnorm.ppf(u))
-    
-    return source_params_ppf
-
-def noise_power_ppf(u, noise_floor_db):
-    # Jeffreys prior for the noise power. Noise power in dB is uniform in `[noise_floor_db, 0]`
-    noise_db = u*noise_floor_db
-    noise_power = constants.db_to_power(noise_db)
-    return noise_power
-
-@__memory__.cache(ignore=['rng'])
-def model_lf_sample(
+def fit_lf_sample(
     t,
     u,
     kernel_name,
     kernel_M,
     use_oq,
     impose_null_integral,
-    rng=None,
-    source_bounds=constants.SOURCE_BOUNDS,
-    source_median=constants.SOURCE_MEDIAN,
-    rho=RHO,
-    noise_floor_db=constants.NOISE_FLOOR_DB,
-    c=constants.BOUNDARY_FACTOR,
+    cacheid,
     samplerargs=SAMPLERARGS,
     runargs=RUNARGS
 ):  
@@ -221,7 +175,7 @@ def model_lf_sample(
     
     # Define the log likelihood function
     @jax.jit
-    def loglike(x):
+    def loglike(x, c=constants.BOUNDARY_FACTOR):
         noise_power, var, r, T, Oq = x
         R = core.kernelmatrix_root_gfd_oq(
             kernel, var, r, t, kernel_M, T, Oq, c, impose_null_integral
@@ -229,52 +183,59 @@ def model_lf_sample(
         logl = core.loglikelihood_hilbert(R, u, noise_power)
         return jax.lax.cond(jnp.isnan(logl), lambda: -jnp.inf, lambda: logl)
 
-    # Define the prior
-    source_params_ppf = _get_source_params_ppf(source_bounds, source_median, rho)
-    
-    def ptform(u):
+    def ptform(
+        u,
+        prior=scipy.stats.lognorm(np.log(10))
+    ):
         if not use_oq:
-            # Constrain `Oq` to the value `source_bounds['Oq'][1]` (should be 1)
-            u = np.append(u, 1.)
+            # Hack: constrain `Oq` to 1 (= the median of the prior)
+            u = np.append(u, .5)
         
-        noise_power = noise_power_ppf(u[0], noise_floor_db)
-        
-        # This unpacking order must match `constants.SOURCE_PARAMS`
-        var, r, T, Oq = source_params_ppf(u[1:])
-
-        # This return value must match `MODEL_LF_SAMPLE_PARAMS`
-        return np.array([noise_power, var, r, T, Oq])
+        x = prior.ppf(u)
+        return x
     
-    sampler = dynesty.NestedSampler(
-        loglike, ptform, ndim=ndim, npdim=npdim, rstate=rng, **samplerargs
-    )
-    sampler.run_nested(**runargs)
-    return sampler.results
+    # Run the sampler and cache results based on `cacheid`
+    if 'nlive' not in samplerargs:
+        samplerargs['nlive'] = ndim*5
 
-@__memory__.cache
-def yield_modeled_lf_samples(
-    numsamples=30,
-    seed=6701
+    @__memory__.cache
+    def run_nested(cacheid, samplerargs, runargs):
+        seed = cacheid
+        rng = np.random.default_rng(seed)
+        sampler = dynesty.NestedSampler(
+            loglike, ptform, ndim=ndim, npdim=npdim,
+            rstate=rng, **samplerargs
+        )
+        sampler.run_nested(**runargs)
+        return sampler.results
+    
+    results = run_nested(cacheid, samplerargs, runargs)
+    return results
+
+def yield_fitted_lf_samples(
+    seed=67011,
+    kernel_ms=KERNEL_MS,
+    kernel_names=KERNEL_NAMES
 ):
     lf_samples = get_lf_samples()
     rng = np.random.default_rng(seed)
 
-    for i in range(numsamples):
-        sample = lf_samples[i]
+    for i, sample in enumerate(lf_samples):
         t = sample['t']
         u = sample['u']
-        for kernel_M in KERNEL_M:
-            for kernel_name in KERNEL_NAME:
+        for kernel_M in kernel_ms:
+            for kernel_name in kernel_names:
                 for use_oq in (False, True):
                     for impose_null_integral in (False, True):
                         config = dict(
                             kernel_name = kernel_name,
                             kernel_M = kernel_M,
                             use_oq = use_oq,
-                            impose_null_integral = impose_null_integral
+                            impose_null_integral = impose_null_integral,
+                            cacheid=rng.integers(int(1e8))
                         )
 
-                        results = model_lf_sample(t=t, u=u, rng=rng, **config)
+                        results = fit_lf_sample(t=t, u=u, **config)
                         print(i, config, results['logz'][-1])
                     
                         yield dict(
@@ -283,6 +244,5 @@ def yield_modeled_lf_samples(
                             results=results
                         )
 
-def __dummy():
-    # Stops retriggering cache calculation
-    pass
+def get_fitted_lf_samples():
+    return list(yield_fitted_lf_samples())
