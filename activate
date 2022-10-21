@@ -12,5 +12,8 @@ export PYTHONPYCACHEPREFIX=$CACHEDIR/pyc
 #NUM_CORES=$(nproc --all)
 #export XLA_FLAGS=--xla_force_host_platform_device_count=$NUM_CORES
 
+# https://jax.readthedocs.io/en/latest/gpu_memory_allocation.html
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
+
 export WORKING_ENVIRONMENT_ACTIVATED=
 echo Working environment activated

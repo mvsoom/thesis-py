@@ -137,10 +137,10 @@ def convert_lf_params(p, s, join=True):
         Ta = T0*Ra
         Tp = T0/(2*Rg)
         Te = Tp*(1 + Rk)
-        q = dict(T0=T0, Te=Te, Tp=Tp, Ta=Ta)
+        q = dict(Te=Te, Tp=Tp, Ta=Ta)
     elif s == 'generic -> T':
         q = convert_lf_params(convert_lf_params(p, 'generic -> R'), 'R -> T')
-        q = _select_keys(q, 'T0', 'Te', 'Tp', 'Ta')
+        q = _select_keys(q, 'Te', 'Tp', 'Ta')
     elif s == 'T -> generic':
         q = convert_lf_params(convert_lf_params(p, 'T -> R'), 'R -> generic')
         q = _select_keys(q, 'Oq', 'am', 'Qa')
@@ -154,7 +154,7 @@ def convert_lf_params(p, s, join=True):
         q = dict(Ra=Ra, Rk=Rk, Rg=Rg)
     elif s == 'Rd -> T':
         q = convert_lf_params(convert_lf_params(p, 'Rd -> R'), 'R -> T')
-        q = _select_keys(q, 'T0', 'Te', 'Tp', 'Ta')
+        q = _select_keys(q, 'Te', 'Tp', 'Ta')
     else:
         raise ValueError(f'Unknown conversion: {s}')
     return {**p, **q} if join else q

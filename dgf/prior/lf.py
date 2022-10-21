@@ -308,11 +308,34 @@ def generic_params_to_dict(x, squeeze=False):
         p = {k: jnp.squeeze(v) for k, v in p.items()}
     return p
 
+def sample_and_log_prob_xt(prior, seed):
+    """Works with `generic_params_prior` and `generic_params_trajectory_prior`"""
+    # Sample and get probability of `generic` LF parameters...
+    xg, log_prob_xg = prior.experimental_sample_and_log_prob(
+        seed=seed
+    )
+    
+    # ... and convert to `T` parameters.
+    def xg_to_xt(xg):
+        p = generic_params_to_dict(xg, squeeze=True)
+        p = lfmodel.convert_lf_params(p, 'generic -> T')
+        return jnp.array([p[k] for k in constants.LF_T_PARAMS]).T, p
+    
+    def logabsdetjacobian(xg):
+        jacobian, _ = jax.jacobian(xg_to_xt, has_aux=True)(xg)
+        return jnp.abs(jnp.linalg.slogdet(jacobian)[1])
+    
+    xt, p = xg_to_xt(xg)
+    factors = jax.vmap(logabsdetjacobian)(jnp.atleast_2d(xg))
+    log_prob_xt = log_prob_xg - jnp.sum(factors)
+    
+    return xt, log_prob_xt, p
+
 def sample_dgf(
     num_pitch_periods,
     prior,
-    fs=constants.FS_KHZ,
-    seed=4812
+    seed,
+    fs=constants.FS_KHZ
 ):
     xg = prior.sample(seed=jax.random.PRNGKey(seed))
     
@@ -337,3 +360,11 @@ def sample_dgf(
     u = jnp.nansum(u, axis=0)
 
     return t, u
+
+def sample_and_logprob_dgf(
+    num_pitch_periods,
+    prior,
+    seed,
+    fs=constants.FS_KHZ
+):
+    return 1

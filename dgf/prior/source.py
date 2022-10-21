@@ -44,23 +44,9 @@ def closed_phase_leading(t, u, p, treshold, offset=0.):
     return np.concatenate((u[:i[0]], u_nonzero_swapped, u[i[-1]+1:]))
 
 def _sample_and_log_prob_xt(rng):
-    # Sample and get probability of `generic` LF parameters...
     prior = lf.generic_params_prior()
-    xg, log_prob_xg = prior.experimental_sample_and_log_prob(
-        seed=jax.random.PRNGKey(rng.integers(int(1e4)))
-    )
-    
-    # ... and convert to `T` parameters
-    def xg_to_xt(xg):
-        p = lf.generic_params_to_dict(xg, squeeze=True)
-        p = lfmodel.convert_lf_params(p, 'generic -> T')
-        return jnp.array([p[k] for k in constants.LF_T_PARAMS]), p
-    
-    xt, p = xg_to_xt(xg)
-    jacobian, _ = jax.jacobian(xg_to_xt, has_aux=True)(xg)
-    log_prob_xt = log_prob_xg - jnp.linalg.slogdet(jacobian)[1]
-    
-    return xt, log_prob_xt, p
+    seed = jax.random.PRNGKey(rng.integers(int(1e4)))
+    return lf.sample_and_log_prob_xt(prior, seed)
 
 def _t_params_to_dict(xt):
     p = {k: xt[i] for i, k in enumerate(constants.LF_T_PARAMS)}
