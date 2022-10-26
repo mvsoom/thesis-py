@@ -16,8 +16,6 @@ MAX_FUNDAMENTAL_FREQUENCY_HZ = 500 # Hz
 MIN_PERIOD_LENGTH_MSEC = 1000/MAX_FUNDAMENTAL_FREQUENCY_HZ
 MAX_PERIOD_LENGTH_MSEC = 1000/MIN_FUNDAMENTAL_FREQUENCY_HZ
 
-MEDIAN_PERIOD_LENGTH_MSEC = 7.
-
 # Determined empirically from Holmberg (1988)
 MIN_DECLINATION_TIME_MSEC = 0.2
 MAX_DECLINATION_TIME_MSEC = 4.5
@@ -25,8 +23,6 @@ MAX_DECLINATION_TIME_MSEC = 4.5
 # Lower bounds for the open quotient are based on Drugman (2019, Table 1) and Henrich (2005)
 MIN_OQ = 0.30
 MAX_OQ = 1 - _ZERO
-
-MEDIAN_OQ = 0.60
 
 # Bounds for the asymmetry coefficient are based on Doval (2006, p. 5)
 MIN_AM = 0.5
@@ -51,13 +47,9 @@ LF_T_PARAMS = ('T0', 'Te', 'Tp', 'Ta')
 MIN_VAR = 1e-3
 MAX_VAR = 10.
 
-MEDIAN_VAR = 1.
-
 # Bounds for the relative scale `r`
 MIN_R = 1/(np.pi*FS_KHZ*MAX_PERIOD_LENGTH_MSEC)
 MAX_R = 10. # Independent of the period `T`
-
-MEDIAN_R = 1/np.pi # TODO: how much does this depend on the kernel used?
 
 # Bounds for the source parameters
 SOURCE_PARAMS = ('var', 'r', 'T', 'Oq')
@@ -67,14 +59,6 @@ SOURCE_BOUNDS = {
     'r': [MIN_R, MAX_R],
     'T': [MIN_PERIOD_LENGTH_MSEC, MAX_PERIOD_LENGTH_MSEC],
     'Oq': [MIN_OQ, MAX_OQ]
-}
-
-# Used in for the priors when fitting the DGF prior to samples from the LF model
-SOURCE_MEDIAN = {
-    'var': MEDIAN_VAR,
-    'r': MEDIAN_R,
-    'T': MEDIAN_PERIOD_LENGTH_MSEC,
-    'Oq': MEDIAN_OQ
 }
 
 # Noise floor
