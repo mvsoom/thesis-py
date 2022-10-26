@@ -309,10 +309,14 @@ def generic_params_to_dict(x, squeeze=False):
         p = {k: jnp.squeeze(v) for k, v in p.items()}
     return p
 
-def sample_and_log_prob_xt(prior, seed):
+def t_params_to_dict(xt):
+    p = {k: xt[i] for i, k in enumerate(constants.LF_T_PARAMS)}
+    return p
+
+def sample_and_log_prob_xt(generic_params_prior, seed):
     """Works with `generic_params_prior` and `generic_params_trajectory_prior`"""
     # Sample and get probability of `generic` LF parameters...
-    xg, log_prob_xg = prior.experimental_sample_and_log_prob(
+    xg, log_prob_xg = generic_params_prior.experimental_sample_and_log_prob(
         seed=seed
     )
     
@@ -332,72 +336,52 @@ def sample_and_log_prob_xt(prior, seed):
     
     return xt, log_prob_xt, p
 
-def sample_dgf(
-    num_pitch_periods,
-    prior,
-    seed,
-    fs=constants.FS_KHZ
-):
-    xg = prior.sample(seed=jax.random.PRNGKey(seed))
-    
-    p = generic_params_to_dict(xg)
-    p = lfmodel.convert_lf_params(p, 'generic -> T')
-
-    GOI = jnp.cumsum(p['T0']) - p['T0'][0]
-    end = GOI[-1] + p['T0'][-1]
-    t = np.linspace(0, end, int(end*fs))
-    
-    def warn_if_nans(u):
-        mask = jnp.any(jnp.isnan(u), axis=1)
-        if jnp.sum(mask) > 0:
-            pitch_period_indices = jnp.where(mask)[0]
-            warnings.warn(
-                'Inconsistent LF parameters detected at the following pitch '
-                f'period indices: {pitch_period_indices}'
-            )
-
-    u = jax.vmap(jax.jit(lfmodel.dgf), in_axes=[None, 0, 0])(t, p, GOI)
-    warn_if_nans(u)
-    u = jnp.nansum(u, axis=0)
-
-    return t, u
-
-def _warn_if_nans(u):
-    mask = jnp.any(jnp.isnan(u), axis=1)
-    if jnp.sum(mask) > 0:
-        pitch_period_indices = jnp.where(mask)[0]
-        warnings.warn(
-            'Inconsistent LF parameters detected at the following pitch '
-            f'period indices: {pitch_period_indices}'
-        )
-
-def _countnonzero(u):
-    return jnp.sum(u == 0.)
-
-def _normalize_power(u):
-    power = jnp.sum(u**2)/_countnonzero(u)
-    return u/jnp.sqrt(power)
-
 def sample_and_log_prob_dgf(
-    num_pitch_periods,
-    prior,
+    generic_params_prior,
     seed,
+    num_pitch_periods=1,
+    return_full=False,
     fs=constants.FS_KHZ,
     noise_floor_power=constants.NOISE_FLOOR_POWER
 ):
+    """
+    Sample and get log probability of standardized DGF waveforms from `q(u)`
+    where `u = u(t)`.
+    
+    "Standardized" means that the initial DGF waveform `u0` has gone through
+    the following pipe, i.e., `u = pipe(u0)`:
+      
+      1. Power normalization per pitch period (still ensures that the power of
+         the entire DGF waveform for multiple pitch periods is ~= 1)
+      2. Noise is added such that the GP inference problem's noise is lower bounded
+         at `noise_floor_power`. This basically defines what we define as
+         "close enough", i.e., at which point two DGF waveforms are basically
+         indistinguishable.
+      3. Finally, the closed phase is swapped such that it *leads* the DGF
+         rather than trails it (as, e.g., in Doval 2006).
+    
+    Steps (1) and (2) affect the final probability such that `q(u) != q(u0)`.
+    
+    The `generic_params_prior` can be either `generic_params_prior()` or 
+    `generic_params_trajectory_prior()`.
+    """
     seed1, seed2 = jax.random.split(seed)
     
-    xt, log_prob_xt, p = sample_and_log_prob_xt(prior, seed1)
-    p = lfmodel._select_keys(p, *constants.LF_T_PARAMS)
+    # Sample and get probability of the LF `T` parameters
+    _, log_prob_xt, p = sample_and_log_prob_xt(generic_params_prior, seed1)
+    
+    # Define the amplitude of the noise floor to be used below
+    sigma = jnp.sqrt(noise_floor_power)
     
     # JAX needs statically sized arrays for vmap, so we provide one
-    bufsize = int(np.ceil(np.max(p['T0'])*fs))
+    bufsize = _intceil(np.max(p['T0'])*fs) + 10
     tmax = bufsize/fs
     tbuffer = jnp.linspace(0., tmax, bufsize)
     
     def sample_normalized_dgf_and_log_prob(
-        p, key, tol=1e-6
+        p, key, sigma=sigma, tol=1e-6
     ):
+        """Sample from and get probability of the Gaussian p(u|u0(p))"""
         initial_bracket = lfmodel._get_initial_bracket(
             p['T0'], tol=tol
         )
@@ -419,33 +403,105 @@ def sample_and_log_prob_dgf(
         P = len(constants.LF_T_PARAMS)
         
         # Install the noise floor
-        sigma = jnp.sqrt(noise_floor_power)
         u = u + jax.random.normal(seed, (len(u),))*sigma
         
-        # Calculate the associated density
+        # Calculate the associated Gaussian likelihood
         term1 = (-1/2)*(N - P)*jnp.log(2*jnp.pi*sigma**2)
         term2 = (-1/2)*jnp.linalg.slogdet(jacobian.T @ jacobian)[1]
         log_likelihood = term1 + term2
         
         return u, log_likelihood
     
+    # Set up the vmap operation, since given `pt` the DGF waveforms
+    # are effectively independent (so a vmap is appropriate)
+    keys = jax.random.split(seed2, num_pitch_periods)
+    
+    p = _atleast_1d_dict(p)
+    pt = lfmodel._select_keys(p, *constants.LF_T_PARAMS)
+    
     vmapped = jax.vmap(
         sample_normalized_dgf_and_log_prob,
         in_axes=[0, 0]
     )
     
-    keys = jax.random.split(seed2, num_pitch_periods)
-
-    u, log_likelihood = vmapped(p, keys)
+    u, logls = vmapped(pt, keys)
     
-    # Stitch the sampled DGF periods together
+    # Stitch the sampled DGF periods together and swap the phases around
+    us = []
+    bad_indices1, bad_indices2 = [], []
     for i, ui in enumerate(u):
-        print(i)
+        pi = {k: v[i] for k, v in p.items()}
+        
+        ui_squeezed = ui[:_intceil(pi['T0']*fs)]
+        ti_squeezed = jnp.arange(len(ui_squeezed))/fs
+        ui_squeezed = closed_phase_leading(
+            ti_squeezed, ui_squeezed, pi, treshold=sigma/3
+        )
+
+        if np.any(np.isnan(ui_squeezed)):
+            ui_squeezed = jnp.zeros_like(ui_squeezed)
+            bad_indices1.append(i)
+
+        if not np.isfinite(logls[i]):
+            bad_indices2.append(i)
+
+        us.append(ui_squeezed)
+
+    _warn_if_trouble(bad_indices1, bad_indices2)
     
+    # Concatenate the waveforms and calculate the final probability
+    u = jnp.concatenate(us)
+    t = jnp.arange(len(u))/fs
+    log_prob_u = log_prob_xt + jnp.sum(logls)
     
-    #_warn_if_nans(u)
-    #u = jnp.nansum(u, axis=0)
-    
-    log_prob_u = log_prob_xt + jnp.sum(log_likelihood)
-    
-    return tbuffer, u, log_prob_u
+    if return_full:
+        context = {'p': _squeeze_dict(p), 'us': us, 'logls': logls}
+        return t, u, log_prob_u, context
+    else:
+        return t, u, log_prob_u
+
+def _countnonzero(u):
+    return jnp.sum(u != 0.)
+
+def _normalize_power(u):
+    power = jnp.sum(u**2)/_countnonzero(u)
+    return u/jnp.sqrt(power)
+
+def _intceil(a):
+    return int(np.ceil(a))
+
+def _atleast_1d_dict(d):
+    return {k: jnp.atleast_1d(v) for k, v in d.items()}
+
+def _squeeze_dict(d):
+    return {k: jnp.squeeze(v) for k, v in d.items()}
+
+def _warn_if_trouble(bad_indices1, bad_indices2):
+    if len(bad_indices1) > 0:
+        warnings.warn(
+            f'Inconsistent LF parameters at period indices: {bad_indices1}'
+        )
+    if len(bad_indices2) > 0:
+        warnings.warn(
+            f'Non-finite log likelihood at period indices: {bad_indices2}\n'
+            'Increase the `fs` argument to keep the derivatives finite'
+        )
+
+def _determine_GCI_index(t, u, Te, treshold):
+    mask = (t > Te) & (np.abs(u) < treshold)
+    return np.argmax(mask) # Returns 0 if mask is `False` everywhere
+
+def _swap_dgf(t, u, Te, treshold):
+    i = _determine_GCI_index(t, u, Te, treshold)
+    return np.concatenate((u[i:], u[:i]))
+
+def _nonzero_dgf_indices(t, T0):
+    return np.flatnonzero((0 <= t) & (t <= T0))
+
+def closed_phase_leading(t, u, p, treshold, offset=0.):
+    """Take a DGF waveform and put its closed phase before the GOI"""
+    i = _nonzero_dgf_indices(t - offset, p['T0'])
+    t_nonzero = t[i]
+    u_nonzero = u[i]
+    u_nonzero_swapped = _swap_dgf(t_nonzero - offset, u_nonzero, p['Te'], treshold)
+    return np.concatenate((u[:i[0]], u_nonzero_swapped, u[i[-1]+1:]))

@@ -7,7 +7,6 @@ __all__ = [
     '__datadir__',
     '__cachedir__',
     '__memory__',
-    'scope',
     'sns',
     'jax',
     'jnp',
@@ -36,10 +35,6 @@ def __cachedir__(s=''):
 # on simple objects such as `Dict`s and `dynesty`'s sampler results.
 import joblib
 __memory__ = joblib.Memory(__cachedir__('joblib'), verbose=2)
-
-# Hack some sense into Jupyter notebooks
-# https://pypi.org/project/scoping
-from scoping import scoping as scope
 
 # Configure global plotting options
 import seaborn as sns
