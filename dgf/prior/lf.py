@@ -10,6 +10,7 @@ from lib import lfmodel
 import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
+from functools import partial
 
 import numpy as np
 import warnings
@@ -361,10 +362,90 @@ def sample_dgf(
 
     return t, u
 
-def sample_and_logprob_dgf(
+def _warn_if_nans(u):
+    mask = jnp.any(jnp.isnan(u), axis=1)
+    if jnp.sum(mask) > 0:
+        pitch_period_indices = jnp.where(mask)[0]
+        warnings.warn(
+            'Inconsistent LF parameters detected at the following pitch '
+            f'period indices: {pitch_period_indices}'
+        )
+
+def _countnonzero(u):
+    return jnp.sum(u == 0.)
+
+def _normalize_power(u):
+    power = jnp.sum(u**2)/_countnonzero(u)
+    return u/jnp.sqrt(power)
+
+def sample_and_log_prob_dgf(
     num_pitch_periods,
     prior,
     seed,
-    fs=constants.FS_KHZ
+    fs=constants.FS_KHZ,
+    noise_floor_power=constants.NOISE_FLOOR_POWER
 ):
-    return 1
+    seed1, seed2 = jax.random.split(seed)
+    
+    xt, log_prob_xt, p = sample_and_log_prob_xt(prior, seed1)
+    p = lfmodel._select_keys(p, *constants.LF_T_PARAMS)
+    
+    # JAX needs statically sized arrays for vmap, so we provide one
+    bufsize = int(np.ceil(np.max(p['T0'])*fs))
+    tmax = bufsize/fs
+    tbuffer = jnp.linspace(0., tmax, bufsize)
+    
+    def sample_normalized_dgf_and_log_prob(
+        p, key, tol=1e-6
+    ):
+        initial_bracket = lfmodel._get_initial_bracket(
+            p['T0'], tol=tol
+        )
+        
+        def normalized_dgf(p):
+            u0 = lfmodel.dgf(tbuffer, p, tol=tol, initial_bracket=initial_bracket)
+            return _normalize_power(u0)
+        
+        def normalized_dgf_jacobian(p):
+            jacobian_dict = jax.jacobian(normalized_dgf)(p)
+            jacobian = jnp.vstack([jacobian_dict[k] for k in constants.LF_T_PARAMS]).T # (N, P)
+            return jacobian
+        
+        # Calculate the normalized DGF as a function of `p`
+        u = normalized_dgf(p)
+        jacobian = normalized_dgf_jacobian(p)
+        
+        N = _countnonzero(u)
+        P = len(constants.LF_T_PARAMS)
+        
+        # Install the noise floor
+        sigma = jnp.sqrt(noise_floor_power)
+        u = u + jax.random.normal(seed, (len(u),))*sigma
+        
+        # Calculate the associated density
+        term1 = (-1/2)*(N - P)*jnp.log(2*jnp.pi*sigma**2)
+        term2 = (-1/2)*jnp.linalg.slogdet(jacobian.T @ jacobian)[1]
+        log_likelihood = term1 + term2
+        
+        return u, log_likelihood
+    
+    vmapped = jax.vmap(
+        sample_normalized_dgf_and_log_prob,
+        in_axes=[0, 0]
+    )
+    
+    keys = jax.random.split(seed2, num_pitch_periods)
+
+    u, log_likelihood = vmapped(p, keys)
+    
+    # Stitch the sampled DGF periods together
+    for i, ui in enumerate(u):
+        print(i)
+    
+    
+    #_warn_if_nans(u)
+    #u = jnp.nansum(u, axis=0)
+    
+    log_prob_u = log_prob_xt + jnp.sum(log_likelihood)
+    
+    return tbuffer, u, log_prob_u

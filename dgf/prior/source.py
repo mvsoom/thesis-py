@@ -52,11 +52,6 @@ def _t_params_to_dict(xt):
     p = {k: xt[i] for i, k in enumerate(constants.LF_T_PARAMS)}
     return p
 
-def _normalized_power(u):
-    power = jnp.mean(jnp.sum(u**2))
-    u = u/jnp.sqrt(power)
-    return u
-
 def _sample_and_jacobian(normalized_dgf, p):
     u = normalized_dgf(p)
     
@@ -102,7 +97,7 @@ def sample_and_logprob_q(fs, T, rng):
     if T is None:
         T = p['T0']
     N = int(np.ceil(T*fs) + 1)
-    t = jnp.arange(N)/fs
+    t = np.arange(N)/fs
 
     # Convert the sampled parameters `p` into a normalized DGF waveform `u`
     # and get the Jacobian `\del(u)/\del(p)`
@@ -111,7 +106,9 @@ def sample_and_logprob_q(fs, T, rng):
     
     def normalized_dgf(p):
         u0 = lfmodel.dgf(t, p, tol=tol, initial_bracket=initial_bracket)
-        return _normalized_power(u0)
+        power = jnp.mean(jnp.sum(u0**2))
+        u = u0/jnp.sqrt(power)
+        return u
     
     u, jacobian = _sample_and_jacobian(normalized_dgf, p)
 
