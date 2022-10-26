@@ -65,12 +65,12 @@ def fit_lf_sample(
     # Define the log likelihood function
     @jax.jit
     def loglike(x, c=constants.BOUNDARY_FACTOR):
-        noise_power, var, r, T, Oq = x
+        noise_power_sigma, var, r, T, Oq = x
         R = core.kernelmatrix_root_gfd_oq(
             kernel, var, r, t, kernel_M, T, Oq, c, impose_null_integral
         )
-        logl = core.loglikelihood_hilbert(R, u, noise_power)
-        # NaN logl values occur for Oq > 1 and other extreme cases
+        logl = core.loglikelihood_hilbert(R, u, noise_power_sigma**2)
+        # NaN logl values occur for Oq > 1 and extreme values of x
         return jax.lax.cond(jnp.isnan(logl), lambda: -jnp.inf, lambda: logl)
 
     def ptform(
@@ -126,7 +126,7 @@ def yield_fitted_lf_samples(
                         )
 
                         results = fit_lf_sample(t=t, u=u, **config)
-                        #print(i, config, results['logz'][-1])
+                        print(i, config, results['logz'][-1])
                     
                         yield dict(
                             i=i,
