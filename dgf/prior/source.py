@@ -70,6 +70,7 @@ def fit_lf_sample(
             kernel, var, r, t, kernel_M, T, Oq, c, impose_null_integral
         )
         logl = core.loglikelihood_hilbert(R, u, noise_power)
+        # NaN logl values occur for Oq > 1 and other extreme cases
         return jax.lax.cond(jnp.isnan(logl), lambda: -jnp.inf, lambda: logl)
 
     def ptform(
@@ -125,10 +126,11 @@ def yield_fitted_lf_samples(
                         )
 
                         results = fit_lf_sample(t=t, u=u, **config)
-                        print(i, config, results['logz'][-1])
+                        #print(i, config, results['logz'][-1])
                     
                         yield dict(
-                            sample=i,
+                            i=i,
+                            sample=sample,
                             config=config,
                             results=results
                         )

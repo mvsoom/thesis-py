@@ -91,6 +91,11 @@ def kernelmatrix_root_gfd(kernel, var, scale, t, M, T, c, impose_null_integral=T
 
 @partial(jit, static_argnames=("kernel", "M", "c", "impose_null_integral"))
 def kernelmatrix_root_gfd_oq(kernel, var, r, t, M, T, Oq, c, impose_null_integral=True):
+    # Manually intervene to limit `Oq <= 1`, since this function
+    # will return perfectly sensible results if this is not the case
+    # (the waveform gets shifted to the left and the period is stretched)
+    Oq = jax.lax.cond(Oq <= 1., lambda: Oq, lambda: jnp.nan)
+
     GOI = T*(1 - Oq)
     scale = r*T*Oq
     R = kernelmatrix_root_gfd(kernel, var, scale, t - GOI, M, T*Oq, c, impose_null_integral)
