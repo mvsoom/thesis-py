@@ -44,18 +44,18 @@ LF_GENERIC_BOUNDS = {
 LF_T_PARAMS = ('T0', 'Te', 'Tp', 'Ta')
 
 # Bounds for the variance of a GP given that the data is power-normalized
-MIN_VAR = 1e-3
-MAX_VAR = 10.
+MIN_VAR_SIGMA = 1e-3
+MAX_VAR_SIGMA = 10.
 
 # Bounds for the relative scale `r`
 MIN_R = 1/(np.pi*FS_KHZ*MAX_PERIOD_LENGTH_MSEC)
 MAX_R = 10. # Independent of the period `T`
 
 # Bounds for the source parameters
-SOURCE_PARAMS = ('var', 'r', 'T', 'Oq')
+SOURCE_PARAMS = ('var_sigma', 'r', 'T', 'Oq')
 
 SOURCE_BOUNDS = {
-    'var': [MIN_VAR, MAX_VAR],
+    'var_sigma': [MIN_VAR_SIGMA, MAX_VAR_SIGMA],
     'r': [MIN_R, MAX_R],
     'T': [MIN_PERIOD_LENGTH_MSEC, MAX_PERIOD_LENGTH_MSEC],
     'Oq': [MIN_OQ, MAX_OQ]

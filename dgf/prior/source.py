@@ -16,7 +16,7 @@ import scipy.stats
 import warnings
 import dynesty
 
-MODEL_LF_SAMPLE_PARAMS = ('noise_power', *constants.SOURCE_PARAMS)
+FIT_LF_SAMPLE_PARAMS = ('noise_power_sigma', *constants.SOURCE_PARAMS)
 
 SAMPLERARGS = {'sample': 'rslice', 'bootstrap': 10}
 RUNARGS = {'save_bounds': False, 'maxcall': int(3e5)}
@@ -39,7 +39,11 @@ def get_lf_samples(
             noise_floor_power=noise_floor_power
         )
         p = context['p']
-        sample = dict(p=p, t=t, u=u, log_prob_u=log_prob_u)
+        sample = dict(
+            p=p, t=t, u=u,
+            log_prob_u=log_prob_u,
+            noise_floor_power=noise_floor_power
+        )
         return sample
     
     keys = jax.random.split(jax.random.PRNGKey(seed), num_samples)
@@ -65,11 +69,17 @@ def fit_lf_sample(
     # Define the log likelihood function
     @jax.jit
     def loglike(x, c=constants.BOUNDARY_FACTOR):
-        noise_power_sigma, var, r, T, Oq = x
+        # Upacking must match FIT_LF_SAMPLE_PARAMS
+        noise_power_sigma, var_sigma, r, T, Oq = x
+        
+        noise_power = noise_power_sigma**2
+        var = var_sigma**2
+        
         R = core.kernelmatrix_root_gfd_oq(
             kernel, var, r, t, kernel_M, T, Oq, c, impose_null_integral
         )
-        logl = core.loglikelihood_hilbert(R, u, noise_power_sigma**2)
+        logl = core.loglikelihood_hilbert(R, u, noise_power)
+        
         # NaN logl values occur for Oq > 1 and extreme values of x
         return jax.lax.cond(jnp.isnan(logl), lambda: -jnp.inf, lambda: logl)
 
@@ -138,3 +148,46 @@ def yield_fitted_lf_samples(
 
 def get_fitted_lf_samples():
     return list(yield_fitted_lf_samples())
+
+def process_fitted_lf_samples():
+    def process():
+        for fit in yield_fitted_lf_samples():
+            i, sample, config, results =\
+                fit['i'], fit['sample'], fit['config'], fit['results']
+            
+            #noise_power_sigma_ml = results.samples[-1,0] # Use ML estimate
+            noise_power_sigma = get_theta_mean(results)[0]
+            
+            
+            log_prob_p = results.logz[-1] # Use analytical estimate
+            log_prob_p_sd = results.logzerr[-1] # Use analytical estimate
+            
+            
+            
+            d = dict(
+                **config,
+                i=i,
+                log_prob_p=log_prob_p,
+                log_prob_p_sd=log_prob_p_sd,
+                log_prob_q=sample['log_prob_u'],
+                **sample['p'],
+                SNR_q=-10*np.log10(sample['noise_floor_power']),
+                SNR_p=-10*np.log10(noise_power_sigma**2)
+            )
+            
+            yield {k: _maybe_native(v) for k, v in d.items()}
+            
+    return list(process())
+
+def _maybe_native(v): # https://stackoverflow.com/a/11389998/6783015
+    try: return np.array(v).item()
+    except: return v
+
+def get_theta_mean(results):
+    samples = results.samples
+    weights = np.exp(results.logwt - results.logz[-1])
+
+    # Compute weighted mean and covariance.
+    mean, cov = dynesty.utils.mean_and_cov(samples, weights)
+
+    return mean
