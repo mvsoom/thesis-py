@@ -342,7 +342,8 @@ def sample_and_log_prob_dgf(
     num_pitch_periods=1,
     return_full=False,
     fs=constants.FS_KHZ,
-    noise_floor_power=constants.NOISE_FLOOR_POWER
+    noise_floor_power=constants.NOISE_FLOOR_POWER,
+    swap_phase=True
 ):
     """
     Sample and get log probability of standardized DGF waveforms from `q(u)`
@@ -358,7 +359,7 @@ def sample_and_log_prob_dgf(
          "close enough", i.e., at which point two DGF waveforms are basically
          indistinguishable.
       3. Finally, the closed phase is swapped such that it *leads* the DGF
-         rather than trails it (as, e.g., in Doval 2006).
+         rather than trails it (as, e.g., in Doval 2006) if `swap_phase=True`.
     
     Steps (1) and (2) affect the final probability such that `q(u) != q(u0)`.
     
@@ -434,9 +435,11 @@ def sample_and_log_prob_dgf(
         
         ui_squeezed = ui[:_intceil(pi['T0']*fs)]
         ti_squeezed = jnp.arange(len(ui_squeezed))/fs
-        ui_squeezed = closed_phase_leading(
-            ti_squeezed, ui_squeezed, pi, treshold=sigma/3
-        )
+        
+        if swap_phase:
+            ui_squeezed = closed_phase_leading(
+                ti_squeezed, ui_squeezed, pi, treshold=sigma/3
+            )
 
         if np.any(np.isnan(ui_squeezed)):
             ui_squeezed = jnp.zeros_like(ui_squeezed)
@@ -458,8 +461,8 @@ def sample_and_log_prob_dgf(
         # Calculate the indices of pitch period `i` as `t[a:b]` where
         # `a = p['start'][i]` and `b = p['end'][i]`
         lens = jnp.array(list(map(len, us)))
-        p['end'] = jnp.cumsum(lens)
-        p['start'] = jnp.zeros_like(p['end'])
+        p['end'] = np.cumsum(lens)
+        p['start'] = np.zeros_like(p['end'])
         p['start'][1:] = p['end'][:-1]
         
         context = {'p': _squeeze_dict(p), 'us': us, 'logls': logls}
