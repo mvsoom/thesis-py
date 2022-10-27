@@ -86,6 +86,7 @@ def fit_lf_sample(
     
     # Run the sampler and cache results based on `cacheid`
     if 'nlive' not in samplerargs:
+        samplerargs = samplerargs.copy()
         samplerargs['nlive'] = ndim*5
 
     @__memory__.cache

@@ -143,6 +143,7 @@ def fit_nonlinear_coloring_bijector(
     
     # Run the sampler and cache results based on `cacheid`
     if 'nlive' not in samplerargs:
+        samplerargs = samplerargs.copy()
         samplerargs['nlive'] = ndim*5
 
     @__memory__.cache
@@ -353,6 +354,7 @@ def fit_nonlinear_coloring_trajectory_bijector(
     # Run the sampler and cache results based on `cacheid`
     ndim = n + 2
     if 'nlive' not in samplerargs:
+        samplerargs = samplerargs.copy()
         samplerargs['nlive'] = ndim*5
 
     @__memory__.cache

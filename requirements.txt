@@ -62,10 +62,8 @@ json5==0.9.9
 jsonschema==4.4.0
 jupyter-client==7.2.2
 jupyter-core==4.11.1
-jupyter-lsp==1.5.1
 jupyter-server==1.18.1
 jupyterlab==3.4.7
-jupyterlab-lsp==3.10.2
 jupyterlab-pygments==0.2.2
 jupyterlab-server==2.15.0
 jupyterlab-widgets==1.1.1
@@ -124,8 +122,6 @@ pylint==2.15.3
 pyparsing==3.0.8
 pyrsistent==0.18.1
 python-dateutil==2.8.2
-python-lsp-jsonrpc==1.0.0
-python-lsp-server==1.5.0
 pytoolconfig==1.2.2
 pytz==2022.1
 pyzmq==22.3.0

@@ -37,7 +37,7 @@ def freqresp(v, w=None):
     w, H = scipy.signal.freqresp(([], conjp, k), w)
     return w, H
 
-def play(t, y, autoplay=True):
+def play(t, y, autoplay=False):
     dt = t[1] - t[0]
     rate = int(1000./dt)
     return Audio(y, rate=rate, autoplay=autoplay, normalize=True)

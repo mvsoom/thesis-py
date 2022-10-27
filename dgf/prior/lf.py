@@ -455,6 +455,13 @@ def sample_and_log_prob_dgf(
     log_prob_u = log_prob_xt + jnp.sum(logls)
     
     if return_full:
+        # Calculate the indices of pitch period `i` as `t[a:b]` where
+        # `a = p['start'][i]` and `b = p['end'][i]`
+        lens = jnp.array(list(map(len, us)))
+        p['end'] = jnp.cumsum(lens)
+        p['start'] = jnp.zeros_like(p['end'])
+        p['start'][1:] = p['end'][:-1]
+        
         context = {'p': _squeeze_dict(p), 'us': us, 'logls': logls}
         return t, u, log_prob_u, context
     else:
