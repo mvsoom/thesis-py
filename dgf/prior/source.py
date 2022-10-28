@@ -7,6 +7,7 @@ from dgf import bijectors
 from dgf import isokernels
 from dgf import core
 from lib import lfmodel
+from lib import util
 
 import jax
 import jax.numpy as jnp
@@ -137,7 +138,7 @@ def yield_fitted_lf_samples(
                         )
 
                         results = fit_lf_sample(t=t, u=u, **config)
-                        print(i, config, results['logz'][-1])
+                        #print(i, config, results['logz'][-1])
                     
                         yield dict(
                             i=i,
@@ -155,14 +156,16 @@ def process_fitted_lf_samples():
             i, sample, config, results =\
                 fit['i'], fit['sample'], fit['config'], fit['results']
             
-            #noise_power_sigma_ml = results.samples[-1,0] # Use ML estimate
-            noise_power_sigma = get_theta_mean(results)[0]
+            lf_p = sample['p'].copy()
+            lf_p['Oq_LF'] = lf_p.pop('Oq') # Rename to avoid name clash
             
+            mean, _ = util.get_posterior_moments(results)
+            mean_dict = {
+                k: mean[i] for i, k in enumerate(FIT_LF_SAMPLE_PARAMS)
+            }
             
             log_prob_p = results.logz[-1] # Use analytical estimate
             log_prob_p_sd = results.logzerr[-1] # Use analytical estimate
-            
-            
             
             d = dict(
                 **config,
@@ -170,9 +173,10 @@ def process_fitted_lf_samples():
                 log_prob_p=log_prob_p,
                 log_prob_p_sd=log_prob_p_sd,
                 log_prob_q=sample['log_prob_u'],
-                **sample['p'],
+                **lf_p,
+                **mean_dict,
                 SNR_q=-10*np.log10(sample['noise_floor_power']),
-                SNR_p=-10*np.log10(noise_power_sigma**2)
+                SNR_p=-10*np.log10(mean_dict['noise_power_sigma']**2)
             )
             
             yield {k: _maybe_native(v) for k, v in d.items()}
@@ -183,11 +187,22 @@ def _maybe_native(v): # https://stackoverflow.com/a/11389998/6783015
     try: return np.array(v).item()
     except: return v
 
-def get_theta_mean(results):
-    samples = results.samples
-    weights = np.exp(results.logwt - results.logz[-1])
+def posterior_of_fitted_lf_values(selection=[], numsamples=100):
+    def process():
+        for fit in yield_fitted_lf_samples():
+            config, results = fit['config'], fit['results']
+            
+            if not all([_match_config(config, c) for c in selection]):
+                continue
 
-    # Compute weighted mean and covariance.
-    mean, cov = dynesty.utils.mean_and_cov(samples, weights)
+            yield util.resample_equal(results, numsamples)
 
-    return mean
+    return np.vstack(list(process()))
+
+def _remove_cacheid(d):
+    dc = d.copy()
+    dc.pop('cacheid', None)
+    return dc
+    
+def _match_config(a, b):
+    return _remove_cacheid(a) == _remove_cacheid(b)

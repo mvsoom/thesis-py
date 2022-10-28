@@ -109,8 +109,8 @@ def fit_nonlinear_coloring_bijector(
     # Define the likelihood function `L(s) = p(samples|s)`
     @jax.jit
     def loglike(s):
-        logprob = jnp.sum(get_distribution(s).log_prob(samples))
-        return logprob
+        logl = jnp.sum(get_distribution(s).log_prob(samples))
+        return logl
     
     def rescaled_normal_tril(s):
         """

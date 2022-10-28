@@ -23,3 +23,20 @@ def dyplot(results, names=None):
     fg, ax = dynesty.plotting.cornerplot(results, labels=names)
     plt.tight_layout()
     plt.show()
+
+def importance_weights(results):
+    weights = np.exp(results.logwt - results.logz[-1])
+    return weights
+
+def get_posterior_moments(results):
+    mean, cov = dynesty.utils.mean_and_cov(
+        results.samples, importance_weights(results)
+    )
+    return mean, cov
+
+def resample_equal(results, n):
+    samples = dynesty.utils.resample_equal(
+        results.samples, importance_weights(results)
+    )
+    i = np.random.choice(len(samples), size=n, replace=False)
+    return samples[i,:]
