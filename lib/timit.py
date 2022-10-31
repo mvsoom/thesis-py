@@ -1,41 +1,87 @@
-import jax
-import jax.numpy as jnp
-import pandas as pd
-import pathlib
+"""Utilities for TIMIT and TIMIT-derived VTRFormants datasets"""
 from init import __datadir__
+from lib import praat
+from dgf.prior import period
+from lib import htkio
 
-"""
-SEE ALSO
+import pathlib
+import parselmouth
+import soundfile
+import warnings
+import datatable
 
-https://pyroomacoustics.readthedocs.io/en/pypi-release/pyroomacoustics.datasets.timit.html
-"""
-def read_timit_voiced_fxv(file):
-    d = pd.read_csv(file, delim_whitespace=True, header=None, names=("t1", "t2", "type", "fx"))
-    d['file'] = file
-    return d
+TIMIT = __datadir__('TIMIT')
+VTRFORMANTS = __datadir__('VTRFormants')
 
-def exclude_silent_frames(fxv):
-    return fxv[fxv.type != 0]
+VOWEL_LABELS = [
+    'iy',  
+    'ih',  
+    'eh',  
+    'ey',  
+    'ae',  
+    'aa',  
+    'aw',  
+    'ay',  
+    'ah',  
+    'ao',  
+    'oy',  
+    'ow',  
+    'uh',  
+    'uw',  
+    'ux',  
+    'er',  
+    'ax',  
+    'ix',  
+    'axr', 
+    'ax-h'
+]
 
-def get_periods(file):
-    fxv = read_timit_voiced_fxv(file)
-    #fxv = exclude_silent_frames(fxv) # These are harmless; removal not needed
-    fxv["T"] = 1/fxv.fx*1000 # msec
-    T = jnp.asarray(fxv["T"])
-    return T
+PHN_COLUMNS = ("BEGIN_SAMPLE", "END_SAMPLE", "PHONETIC_LABEL")
 
-def get_transformed_periods(file, b):
-    T = get_periods(file)
-    return b.inverse(T)
+FRAME_LENGTH_SEC = 10/1000. # 10 msec
 
-### CODE BELOW IS JUST COPY PASTED NEEDS FIXING
-timit = __datadir__('TIMIT')
-timit_voiced = __datadir__('TIMIT-voiced')
+def training_set(path):
+    return path / "TRAIN"
 
-def corresponding_timit_file(fxv, suffix):
-    """Valid `suffix` are in `['.WAV', '.PHN', '.TXT', '.WRD']`"""
-    return timit / fxv.relative_to(timit_voiced).with_suffix(suffix)
+def test_set(path):
+    return path / "TEST"
 
-for fxv_file in timit_voiced.rglob("*.fxv"):
-    wav_file = corresponding_timit_file(fxv_file, '.WAV')
-    s = parselmouth.Sound(wav_file.as_posix())
+def getsampleid(file, root):
+    path = file.relative_to(root)
+    id = path.parent / path.stem
+    return id
+
+def corresponding_timit_id(fb_file, root, timit_root):
+    id = getsampleid(fb_file, root)
+    return timit_root / id
+
+def corresponding_wav(fb_file, root, timit_root):
+    return corresponding_timit_id(fb_file, root, timit_root).with_suffix(".WAV")
+
+def corresponding_phn(fb_file, root, timit_root):
+    return corresponding_timit_id(fb_file, root, timit_root).with_suffix(".PHN")
+
+def yield_file_triples(vtr_root, timit_root):
+    """Yield a triple of FB (VTRFormants) and PHN, WAV (TIMIT) files"""
+    for fb_file in vtr_root.rglob("*.FB"):
+        wav_file = corresponding_wav(fb_file, vtr_root, timit_root)
+        if not wav_file.is_file():
+            warnings.warn(f"No WAV file at {wav_file} found for {fb_file}; skipping")
+            continue
+        phn_file = corresponding_phn(fb_file, vtr_root, timit_root)
+        if not phn_file.is_file():
+            warnings.warn(f"No PHN file at {phn_file} found for {fb_file}; skipping")
+            continue
+        yield fb_file, phn_file, wav_file
+
+def read_fb_file(fb_file):
+    """Return F1-4 and B1-4 tracks in kHz at 10 msec frames"""
+    FB, _, _ = htkio.htkread(fb_file)
+    return FB.T # (rows = frame indices, cols 0-3 = F1-4, cols 4-7 = B1-B4)
+
+def read_phn_file(phn_file):
+    return datatable.fread(phn_file, sep=" ", columns=PHN_COLUMNS)
+
+def read_wav_file(wav_file):
+    d, fs = soundfile.read(wav_file)
+    return d, fs # Hz

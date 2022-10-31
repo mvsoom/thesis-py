@@ -20,8 +20,6 @@ import time
 import random
 import warnings
 
-MIN_NUM_PERIODS = 3
-
 def load_recording_and_markers(recordings, markings, key):
     k = recordings.load_shifted(key)
     try:
@@ -60,9 +58,9 @@ def align_and_intersect(a, b):
 def yield_training_pairs(
     recordings,
     markings,
-    min_period_length_msec,
-    max_period_length_msec,
-    min_num_periods # Reject a voiced group if it has less than `min_num_periods` pitch periods
+    min_period_length_msec=constants.MIN_PERIOD_LENGTH_MSEC,
+    max_period_length_msec=constants.MAX_PERIOD_LENGTH_MSEC,
+    min_num_periods=constants.MIN_NUM_PERIODS
 ):
     """Yield all training pairs consisting of the true and Praat-estimated pitch periods in msec"""
     for key in recordings.keys():
@@ -141,7 +139,7 @@ def get_aplawd_training_pairs(cacheid=18796):
         markings,
         constants.MIN_PERIOD_LENGTH_MSEC + constants._ZERO,
         constants.MAX_PERIOD_LENGTH_MSEC - constants._ZERO,
-        MIN_NUM_PERIODS
+        constants.MIN_NUM_PERIODS
     ))
 
     return training_pairs

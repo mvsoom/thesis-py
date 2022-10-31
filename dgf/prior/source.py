@@ -117,7 +117,8 @@ def fit_lf_sample(
 def yield_fitted_lf_samples(
     seed=67011,
     kernel_ms=KERNEL_MS,
-    kernel_names=KERNEL_NAMES
+    kernel_names=KERNEL_NAMES,
+    verbose=False
 ):
     lf_samples = get_lf_samples()
     rng = np.random.default_rng(seed)
@@ -138,7 +139,7 @@ def yield_fitted_lf_samples(
                         )
 
                         results = fit_lf_sample(t=t, u=u, **config)
-                        #print(i, config, results['logz'][-1])
+                        if verbose: print(i, config, results['logz'][-1])
                     
                         yield dict(
                             i=i,
