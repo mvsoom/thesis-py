@@ -137,8 +137,8 @@ def get_aplawd_training_pairs(cacheid=18796):
     training_pairs = list(yield_training_pairs(
         recordings,
         markings,
-        constants.MIN_PERIOD_LENGTH_MSEC + constants._ZERO,
-        constants.MAX_PERIOD_LENGTH_MSEC - constants._ZERO,
+        constants.MIN_PERIOD_LENGTH_MSEC,
+        constants.MAX_PERIOD_LENGTH_MSEC,
         constants.MIN_NUM_PERIODS
     ))
 

@@ -66,7 +66,7 @@ def yield_vowel_segments(d, phn):
     for start, end, label in phn.to_tuples():
         yield label, d[start:end]
 
-def yield_training_pairs(
+def yield_training_data(
     fb_file, phn_file, wav_file,
     return_full=False,
     min_period_length_msec=constants.MIN_PERIOD_LENGTH_MSEC,
@@ -74,9 +74,9 @@ def yield_training_pairs(
     min_num_periods=constants.MIN_NUM_PERIODS
 ):
     """
-    Yield all training pairs consisting of the true and Praat-estimated
-    formant frequencies F1-F3 averaged over (i.e., within) the pitch periods
-    estimated by Praat
+    Yield all training tuples consisting of Praat's estimated pitch period (msec),
+    and the true and Praat-estimated formant frequencies F1-F3 averaged over
+    (i.e., within) the pitch periods estimated by Praat, in Hz
     """
     d, fs = read_wav_file_and_normalize(wav_file)
     phn = select_vowel_segments(phn_file)
@@ -106,12 +106,12 @@ def yield_training_pairs(
             warn(f'Praat only gave {num_pulses} < {min_num_periods + 1} pulses')
             continue
         
-        T = np.diff(pulse_idx)/fs*1000. # msec
-        if np.any(T > max_period_length_msec) or \
-           np.any(T < min_period_length_msec):
+        T_praat = np.diff(pulse_idx)/fs*1000. # msec
+        if np.any(T_praat > max_period_length_msec) or \
+           np.any(T_praat < min_period_length_msec):
             # Discard this and continue; we assume user will never accept
             # such Praat estimates so we don't want to model this case.
-            warn(f'Estimated Praat periods not within `{{min|max}}_period_length_msec`: {T}')
+            warn(f'Estimated Praat periods not within `{{min|max}}_period_length_msec`: {T_praat}')
             continue
 
         ##############################################
@@ -150,6 +150,8 @@ def yield_training_pairs(
         assert not np.any(np.isnan(F_praat_periods))
         assert not np.any(np.isnan(F_true_periods))
         
+        T_praat = T_praat[~empty]
+        
         # Finally, get rid of very short samples
         num_pitch_periods = F_praat_periods.shape[0]
         assert F_true_periods.shape[0] == num_pitch_periods
@@ -158,18 +160,20 @@ def yield_training_pairs(
             continue
         
         if return_full:
-            yield F_true_periods, F_praat_periods, locals()
+            yield T_praat, F_true_periods, F_praat_periods, locals()
         else:
-            yield F_true_periods, F_praat_periods
+            yield T_praat, F_true_periods, F_praat_periods
 
 @__memory__.cache
-def get_vtrformants_training_pairs(cacheid=442369):
+def get_vtrformants_training_data(cacheid=452369):
     """
-    Get a list of training pairs from the VTRFormants database (TRAINING set).
+    Get a list of training data from the VTRFormants database (TRAINING set).
     
-    A training pair consists of two identically matrices shaped
-    `(num_pitch_periods, 3)` of formant F1-F3 values in Hz. The
-    first matrix in the pair is the ground truth and second one is Praat's estimate.
+    One training tuple consists of an array of Praat's pitch period estimate
+    during the vowel segment shaped `(num_pitch_periods,)`  and a pair of two
+    identically shaped `(num_pitch_periods, 3)` matrices of formant F1-F3 values
+    in Hz. The first matrix in the pair is the ground truth and second one is
+    Praat's estimate.
     
     Note that these estimates use Praat's estimates of the pitch periods
     which also introduces extra noise.
@@ -177,12 +181,12 @@ def get_vtrformants_training_pairs(cacheid=442369):
     vtr_root = timit.training_set(timit.VTRFORMANTS)
     timit_root = timit.training_set(timit.TIMIT)
     
-    all_training_pairs = []
+    all_training_data = []
     for triple in timit.yield_file_triples(vtr_root, timit_root):
         fb_file, phn_file, wav_file = triple
         
-        training_pairs = list(
-            yield_training_pairs(
+        training_data = list(
+            yield_training_data(
                 fb_file, phn_file, wav_file,
                 min_period_length_msec=constants.MIN_PERIOD_LENGTH_MSEC,
                 max_period_length_msec=constants.MAX_PERIOD_LENGTH_MSEC,
@@ -190,15 +194,15 @@ def get_vtrformants_training_pairs(cacheid=442369):
             )
         )
         
-        all_training_pairs.extend(training_pairs)
+        all_training_data.extend(training_data)
 
-    return all_training_pairs
+    return all_training_data
 
 # Cannot be cached due to complex return value
 def _fit_formants_trajectory_kernel():
     """Fit Matern kernels to TIMIT/VTRFormants and return the MAP one"""
-    training_pairs = get_vtrformants_training_pairs()
-    true_F_trajectories = [p[0] for p in training_pairs]
+    training_data = get_vtrformants_training_data()
+    true_F_trajectories = [p[1] for p in training_data]
     
     a, b = constants.MIN_FORMANT_FREQ_HZ, constants.MAX_FORMANT_FREQ_HZ
     bounds = jnp.array([
@@ -245,9 +249,9 @@ def fit_formants_trajectory_bijector(
     return bijector
 
 def _fit_praat_estimation_mean_and_cov():
-    training_pairs = get_vtrformants_training_pairs()
-    true_F_trajectories = [p[0] for p in training_pairs]
-    praat_F_trajectories = [p[1] for p in training_pairs]
+    training_data = get_vtrformants_training_data()
+    true_F_trajectories = [p[1] for p in training_data]
+    praat_F_trajectories = [p[2] for p in training_data]
     
     b = fit_formants_trajectory_bijector(1)
     return bijectors.estimate_observation_noise_cov(
