@@ -4,7 +4,7 @@ from lib import aplawd
 from dgf import bijectors
 from dgf import isokernels
 from dgf import core
-from dgf import constants
+from lib import constants
 
 import tensorflow_probability.substrates.jax.distributions as tfd
 import tensorflow_probability.substrates.jax.bijectors as tfb

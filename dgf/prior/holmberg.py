@@ -1,6 +1,6 @@
 from init import __datadir__
 from dgf import bijectors
-from dgf import constants
+from lib import constants
 
 import jax
 import jax.numpy as jnp

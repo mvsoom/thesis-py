@@ -1,6 +1,6 @@
 from init import __memory__
 from dgf import isokernels
-from dgf import constants
+from lib import constants
 
 import jax
 import jax.numpy as jnp

@@ -3,7 +3,7 @@ from lib import timit
 from lib import util
 from lib import praat
 from dgf import bijectors
-from dgf import constants
+from lib import constants
 
 import numpy as np
 import datatable
@@ -189,7 +189,7 @@ def get_vtrformants_training_pairs(cacheid=442369):
 
 # Cannot be cached due to complex return value
 def _fit_period_trajectory_kernel():
-    """Fit Matern kernels to the APLAWD database and return the MAP one"""
+    """Fit Matern kernels to the training pairs and return the MAP one"""
     subset = get_aplawd_training_pairs_subset()
     samples = [d[0][:,None] for d in subset]
 
