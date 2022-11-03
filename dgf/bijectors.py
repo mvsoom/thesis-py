@@ -381,48 +381,40 @@ def fit_nonlinear_coloring_trajectory_bijector(
 def estimate_observation_noise_cov(
     nonlinear_coloring_trajectory_bijector,
     true_samples,
-    observed_samples
+    observed_samples,
+    return_mean=False
 ):
     """
     **Note: the covariance is estimate in the "colored domain", i.e., where
     the samples are assumed MVN or GP.**
     
-    Estimate the `(n, n)` covariance matrix given a list of `(m, n)` samples
+    Estimate the `(n, n)` covariance matrix given a list of `(m, n)` samples.
+    Optionally return the `(n,)` mean of the errors. The errors are defined
+    as true MINUS estimate, as
+    
+        (observed estimate) = (true) + (error)
+        
     """
     true_stacked = jnp.vstack(true_samples)
     observed_stacked = jnp.vstack(observed_samples)
     
     softclipexp, matrix_transpose, reshape, color = nonlinear_coloring_trajectory_bijector.bijectors
     
-    error = softclipexp.inverse(true_stacked) - softclipexp.inverse(observed_stacked)
+    error = softclipexp.inverse(observed_stacked) - softclipexp.inverse(true_stacked)
 
-    observation_noise_cov = jnp.cov(error.T)
-    return jnp.atleast_2d(observation_noise_cov)
-
-def estimate_observation_noise_mean(
-    nonlinear_coloring_trajectory_bijector,
-    true_samples,
-    observed_samples
-):
-    """
-    **Note: the covariance is estimate in the "colored domain", i.e., where
-    the samples are assumed MVN or GP.**
+    observation_noise_cov = jnp.atleast_2d(jnp.cov(error.T))
     
-    Estimate the `(n, n)` covariance matrix given a list of `(m, n)` samples
-    """
-    true_stacked = jnp.vstack(true_samples)
-    observed_stacked = jnp.vstack(observed_samples)
-    
-    softclipexp, matrix_transpose, reshape, color = nonlinear_coloring_trajectory_bijector.bijectors
-    
-    error = softclipexp.inverse(true_stacked) - softclipexp.inverse(observed_stacked)
-
-    return jnp.atleast_1d(jnp.mean(error, axis=0))
+    if return_mean:
+        observation_noise_mean = jnp.atleast_1d(jnp.mean(error, axis=0))
+        return observation_noise_mean, observation_noise_cov
+    else:
+        return observation_noise_cov
 
 def condition_nonlinear_coloring_trajectory_bijector(
     nonlinear_coloring_trajectory_bijector,
     observation,
-    observation_noise_cov
+    observation_noise_cov,
+    observation_noise_mean=None
 ):
     """
     Condition a given nonlinear coloring trajectory bijector on
@@ -434,7 +426,9 @@ def condition_nonlinear_coloring_trajectory_bijector(
     and then returns a new bijector that sends N(0,I) to the conditional
     MVN. [Maddox+ 2021] show how to sample in `O(m^3 + n^3)` time.
     
-    Get `observation_noise_cov` from `estimate_observation_noise_cov()`.
+    Get `observation_noise_cov` (and perhaps `observation_noise_mean`)
+    from `estimate_observation_noise_cov()`, because these need to
+    be calculated in the colored domain.
     """
     # Pick apart the bijector of the nonlinear coloring prior
     softclipexp, matrix_transpose, reshape, color = nonlinear_coloring_trajectory_bijector.bijectors
@@ -454,6 +448,12 @@ def condition_nonlinear_coloring_trajectory_bijector(
     m = observation.shape[0]
     kron_C = jnp.kron(observation_noise_cov, jnp.eye(m))
     
+    # If the noise is not N(0,Sigma) distributed, add the noise mean to
+    # the GP prior GP(kron_mean, kron_K) -- then the problem is again
+    # with zero-mean noise.
+    if observation_noise_mean is not None:
+        kron_mean = kron_mean + jnp.kron(observation_noise_mean, jnp.ones(m))
+    
     # Invert the noise-enhanced kernel
     K = stabilize(kron_K + kron_C)
     L, lower = jax.scipy.linalg.cho_factor(K, lower=True)
@@ -463,12 +463,14 @@ def condition_nonlinear_coloring_trajectory_bijector(
         return X
     
     # Calculate the conditional mean
-    # (Source: [Maddox+ 2021, Eq. 4] with "x_test := X")
-    b = bijector_inverse(observation)
-    kron_conditional_mean = kron_K @ solve_K(b)
+    # (Source: [Maddox+ 2021, Eq. 4] with "x_test := X" -- with
+    # prior mean `kron_mean`: see Eq. (2.38) from Rasmussen (2006))
+    obs_z = bijector_inverse(observation)
+    kron_conditional_mean = kron_mean + kron_K @ solve_K(obs_z - kron_mean)
     
     # Calculate the conditional covariance
-    # (Source: [Maddox+ 2021, Eq. 4] with "x_test := X")
+    # (Source: [Maddox+ 2021, Eq. 4] with "x_test := X" -- this
+    # calculation does not depend on prior mean `kron_mean`)
     I = jnp.eye(kron_K.shape[0])
     kron_conditional_cov = kron_K @ (I - solve_K(kron_K))
     

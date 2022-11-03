@@ -244,22 +244,22 @@ def fit_formants_trajectory_bijector(
 
     return bijector
 
-def _fit_praat_estimation_cov():
+def _fit_praat_estimation_mean_and_cov():
     training_pairs = get_vtrformants_training_pairs()
     true_F_trajectories = [p[0] for p in training_pairs]
     praat_F_trajectories = [p[1] for p in training_pairs]
     
     b = fit_formants_trajectory_bijector(1)
-    cov = bijectors.estimate_observation_noise_cov(
-        b, true_F_trajectories, praat_F_trajectories
+    return bijectors.estimate_observation_noise_cov(
+        b, true_F_trajectories, praat_F_trajectories, return_mean=True
     )
-    return cov
 
-def fit_praat_estimation_cov(
-    _cov = _fit_praat_estimation_cov()
+def fit_praat_estimation_mean_and_cov(
+    _ret = _fit_praat_estimation_mean_and_cov()
 ):
-    """Cache `_fit_praat_estimation_cov()`"""
-    return _cov
+    """Cache `_fit_praat_estimation_mean_and_cov()`"""
+    mean, cov = _ret
+    return mean, cov
 
 def maximum_likelihood_envelope_params(results):
     *s, envelope_lengthscale, envelope_noise_sigma = results.samples[-1]
@@ -282,11 +282,12 @@ def formants_trajectory_prior(
         name = 'FormantsTrajectoryPrior'
     else:
         name = 'ConditionedFormantsTrajectoryPrior'
+        mean, cov = fit_praat_estimation_mean_and_cov()
         bijector = bijectors.condition_nonlinear_coloring_trajectory_bijector(
-            bijector, praat_estimate, fit_praat_estimation_cov()
+            bijector, praat_estimate, cov, mean
         )
     
-    standardnormals = tfd.MultivariateNormalDiag(scale_diag=jnp.ones(num_pitch_periods))
+    standardnormals = tfd.MultivariateNormalDiag(scale_diag=jnp.ones(3*num_pitch_periods))
     
     prior = tfd.TransformedDistribution(
         distribution=standardnormals,
