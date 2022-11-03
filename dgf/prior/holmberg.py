@@ -5,6 +5,7 @@ from lib import constants
 import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
+import tensorflow_probability.substrates.jax.bijectors as tfb
 
 import numpy as np
 import pandas as pd
@@ -68,8 +69,14 @@ def declination_time_prior(cacheid=45870):
     standardnormal = tfd.MultivariateNormalDiag(scale_diag=jnp.ones(1))
     prior = tfd.TransformedDistribution(
         standardnormal,
-        bijector,
-        name='LFDeclinationTimePrior'
+        bijector
     )
     
-    return prior # prior.sample(n) returns (n, 1) shaped
+    # Squeeze out the last dimension
+    squeeze_bijector = tfb.Reshape(event_shape_out=(), event_shape_in=(1,))
+    squeezed_prior = tfd.TransformedDistribution(
+        distribution=prior,
+        bijector=squeeze_bijector,
+        name='LFDeclinationTimePrior'
+    )
+    return squeezed_prior # prior.sample(ns) shaped (ns,)

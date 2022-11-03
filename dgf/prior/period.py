@@ -275,7 +275,13 @@ def period_trajectory_prior(
         bijector=squeeze_bijector,
         name=name
     )
-    return prior # prior.sample(n) shaped (n, num_pitch_periods) shaped
+    return prior # prior.sample(ns) shaped (ns, num_pitch_periods) shaped
 
 def period_marginal_prior():
-    return period_trajectory_prior(1) # prior.sample(n) shaped (n, 1)
+    squeeze_bijector = tfb.Reshape(event_shape_out=(), event_shape_in=(1,))
+    prior = tfd.TransformedDistribution(
+        distribution=period_trajectory_prior(1),
+        bijector=squeeze_bijector,
+        name="PeriodMarginalPrior"
+    )
+    return prior # prior.sample(ns) shaped (ns,)

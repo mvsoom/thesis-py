@@ -294,7 +294,13 @@ def formants_trajectory_prior(
         bijector=bijector,
         name=name
     )
-    return prior # prior.sample(n) shaped (n, num_pitch_periods) shaped
+    return prior # prior.sample(ns) shaped (ns, num_pitch_periods, 3)
 
 def formants_marginal_prior():
-    return formants_trajectory_prior(1) # prior.sample(n) shaped (n, 1)
+    squeeze_bijector = tfb.Reshape(event_shape_out=(-1,), event_shape_in=(1, 3))
+    prior = tfd.TransformedDistribution(
+        distribution=formants_trajectory_prior(1),
+        bijector=squeeze_bijector,
+        name="FormantsMarginalPrior"
+    )
+    return prior # prior.sample(ns) shaped (ns, 3)

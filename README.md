@@ -6,6 +6,8 @@
 
 # Connecting to remote server from local
 
+WARNING: remote has different Python version installed -- this gives `pip` troubles sometimes. We are on Python 3.8.10.
+
 0. local: **connect to eduroam**
 1. local: Turn on VPN
 2. local: `ssh marnix@134.184.26.35`

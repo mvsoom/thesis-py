@@ -180,8 +180,8 @@ def sample_lf_params(fs=constants.FS_KHZ, numsamples=int(1e5), seed=2387):
     rng = np.random.default_rng(rng_seed)
 
     # Sample pitch periods and declination times (both in msec)
-    T0 = period.period_marginal_prior().sample(numsamples, seed=key2).squeeze()
-    Td = holmberg.declination_time_prior().sample(numsamples, seed=key3).squeeze()
+    T0 = period.period_marginal_prior().sample(numsamples, seed=key2)
+    Td = holmberg.declination_time_prior().sample(numsamples, seed=key3)
     
     # Sample the `R` parameters based on the pitch periods
     p = _collect_list_of_dicts([sample_R_params(T, Td, rng) for T, Td in zip(T0, Td)])
