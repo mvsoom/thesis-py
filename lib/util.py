@@ -40,3 +40,9 @@ def resample_equal(results, n):
     )
     i = np.random.choice(len(samples), size=n, replace=False)
     return samples[i,:]
+
+def correlationmatrix(cov):
+    """https://en.wikipedia.org/wiki/Correlation#Correlation_matrices"""
+    sigma = np.sqrt(np.diag(cov))
+    corr = np.diag(1/sigma) @ cov @ np.diag(1/sigma)
+    return corr

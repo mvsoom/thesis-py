@@ -399,6 +399,26 @@ def estimate_observation_noise_cov(
     observation_noise_cov = jnp.cov(error.T)
     return jnp.atleast_2d(observation_noise_cov)
 
+def estimate_observation_noise_mean(
+    nonlinear_coloring_trajectory_bijector,
+    true_samples,
+    observed_samples
+):
+    """
+    **Note: the covariance is estimate in the "colored domain", i.e., where
+    the samples are assumed MVN or GP.**
+    
+    Estimate the `(n, n)` covariance matrix given a list of `(m, n)` samples
+    """
+    true_stacked = jnp.vstack(true_samples)
+    observed_stacked = jnp.vstack(observed_samples)
+    
+    softclipexp, matrix_transpose, reshape, color = nonlinear_coloring_trajectory_bijector.bijectors
+    
+    error = softclipexp.inverse(true_stacked) - softclipexp.inverse(observed_stacked)
+
+    return jnp.atleast_1d(jnp.mean(error, axis=0))
+
 def condition_nonlinear_coloring_trajectory_bijector(
     nonlinear_coloring_trajectory_bijector,
     observation,

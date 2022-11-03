@@ -5,7 +5,13 @@ from lib import praat
 from dgf import bijectors
 from lib import constants
 
+import tensorflow_probability.substrates.jax.distributions as tfd
+import tensorflow_probability.substrates.jax.bijectors as tfb
+
+import jax
+import jax.numpy as jnp
 import numpy as np
+
 import datatable
 import functools
 import operator
@@ -42,6 +48,7 @@ def read_wav_file_and_normalize(wav_file):
     return util.normalize_power(d), fs
 
 def _robustnanmean(a, axis):
+    """Identical to `np.nanmean` but issues no warning when input is all NaNs"""
     if not np.all(np.isnan(a)):
         return np.nanmean(a, axis=axis)
     else:
@@ -188,27 +195,29 @@ def get_vtrformants_training_pairs(cacheid=442369):
     return all_training_pairs
 
 # Cannot be cached due to complex return value
-def _fit_period_trajectory_kernel():
-    """Fit Matern kernels to the training pairs and return the MAP one"""
-    subset = get_aplawd_training_pairs_subset()
-    samples = [d[0][:,None] for d in subset]
-
+def _fit_formants_trajectory_kernel():
+    """Fit Matern kernels to TIMIT/VTRFormants and return the MAP one"""
+    training_pairs = get_vtrformants_training_pairs()
+    true_F_trajectories = [p[0] for p in training_pairs]
+    
+    a, b = constants.MIN_FORMANT_FREQ_HZ, constants.MAX_FORMANT_FREQ_HZ
     bounds = jnp.array([
-        constants.MIN_PERIOD_LENGTH_MSEC,
-        constants.MAX_PERIOD_LENGTH_MSEC
-    ])[None,:]
+        (a, b),
+        (a, b),
+        (a, b)
+    ])
     
     def fit(kernel_name, cacheid):
         bijector, results = bijectors.fit_nonlinear_coloring_trajectory_bijector(
-            samples, bounds, kernel_name, cacheid, return_fit_results=True
+            true_F_trajectories, bounds, kernel_name, cacheid, return_fit_results=True
         )
         return kernel_name, bijector, results
     
     kernel_fits = [
-        fit("Matern12Kernel", 19863),
-        fit("Matern32Kernel", 11279), # Spoiler: this has highest evidence
-        fit("Matern52Kernel", 54697),
-        fit("SqExponentialKernel", 79543)
+        fit("Matern12Kernel", 23654862),
+        fit("Matern32Kernel", 899785662), # Spoiler: this has highest evidence
+        fit("Matern52Kernel", 17893652),
+        fit("SqExponentialKernel", 9856723)
     ]
     
     def logz(fit_result):
@@ -217,3 +226,74 @@ def _fit_period_trajectory_kernel():
     
     best_fit = max(*kernel_fits, key=lambda fit_result: logz(fit_result))
     return best_fit # == (kernel_name, bijector, results)
+
+def fit_formants_trajectory_kernel(
+    _best_fit = _fit_formants_trajectory_kernel()
+):
+    """Cache `_fit_formants_trajectory_kernel()`"""
+    return _best_fit
+
+def fit_formants_trajectory_bijector(
+    num_pitch_periods=None
+):
+    kernel_name, bijector, results = fit_formants_trajectory_kernel()
+    del kernel_name, results
+    
+    if num_pitch_periods is not None:
+        bijector = bijector(num_pitch_periods)
+
+    return bijector
+
+def _fit_praat_estimation_cov():
+    training_pairs = get_vtrformants_training_pairs()
+    true_F_trajectories = [p[0] for p in training_pairs]
+    praat_F_trajectories = [p[1] for p in training_pairs]
+    
+    b = fit_formants_trajectory_bijector(1)
+    cov = bijectors.estimate_observation_noise_cov(
+        b, true_F_trajectories, praat_F_trajectories
+    )
+    return cov
+
+def fit_praat_estimation_cov(
+    _cov = _fit_praat_estimation_cov()
+):
+    """Cache `_fit_praat_estimation_cov()`"""
+    return _cov
+
+def maximum_likelihood_envelope_params(results):
+    *s, envelope_lengthscale, envelope_noise_sigma = results.samples[-1]
+    del s
+    return envelope_lengthscale, envelope_noise_sigma
+
+def formants_trajectory_prior(
+    num_pitch_periods,
+    praat_estimate=None
+):
+    """
+    A GP prior based on the APLAWD database for pitch period trajectories
+    of length `num_pitch_periods`, possibly conditioned on `praat_estimate`,
+    which must be an array shaped `(num_pitch_periods,)`. The prior returns
+    samples shaped `(num_pitch_periods,)`.
+    """
+    bijector = fit_formants_trajectory_bijector(num_pitch_periods)
+    
+    if praat_estimate is None:
+        name = 'FormantsTrajectoryPrior'
+    else:
+        name = 'ConditionedFormantsTrajectoryPrior'
+        bijector = bijectors.condition_nonlinear_coloring_trajectory_bijector(
+            bijector, praat_estimate, fit_praat_estimation_cov()
+        )
+    
+    standardnormals = tfd.MultivariateNormalDiag(scale_diag=jnp.ones(num_pitch_periods))
+    
+    prior = tfd.TransformedDistribution(
+        distribution=standardnormals,
+        bijector=bijector,
+        name=name
+    )
+    return prior # prior.sample(n) shaped (n, num_pitch_periods) shaped
+
+def formants_marginal_prior():
+    return formants_trajectory_prior(1) # prior.sample(n) shaped (n, 1)

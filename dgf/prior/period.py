@@ -218,6 +218,15 @@ def _fit_praat_estimation_cov():
     cov = bijectors.estimate_observation_noise_cov(b, true_samples, praat_samples)
     return cov
 
+def _fit_praat_estimation_mean():
+    subset = get_aplawd_training_pairs_subset()
+    true_samples  = [d[0][:,None] for d in subset]
+    praat_samples = [d[1][:,None] for d in subset]
+    
+    b = fit_period_trajectory_bijector(1)
+    mean = bijectors.estimate_observation_noise_mean(b, true_samples, praat_samples)
+    return mean
+
 def fit_praat_estimation_cov(
     _cov = _fit_praat_estimation_cov()
 ):
