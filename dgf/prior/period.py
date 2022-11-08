@@ -57,12 +57,13 @@ def align_and_intersect(a, b):
 
 def yield_training_pairs(
     recordings,
-    markings,
-    min_period_length_msec=constants.MIN_PERIOD_LENGTH_MSEC,
-    max_period_length_msec=constants.MAX_PERIOD_LENGTH_MSEC,
-    min_num_periods=constants.MIN_NUM_PERIODS
+    markings
 ):
     """Yield all training pairs consisting of the true and Praat-estimated pitch periods in msec"""
+    min_period_length_msec = constants.MIN_PERIOD_LENGTH_MSEC + constants._ZERO
+    max_period_length_msec = constants.MAX_PERIOD_LENGTH_MSEC - constants._ZERO
+    min_num_periods = constants.MIN_NUM_PERIODS
+    
     for key in recordings.keys():
         k, m = load_recording_and_markers(recordings, markings, key)
         if m is None:
@@ -136,10 +137,7 @@ def get_aplawd_training_pairs(cacheid=18796):
     # Get pairs of 'true' pitch periods and the ones estimated by Praat based on the recordings
     training_pairs = list(yield_training_pairs(
         recordings,
-        markings,
-        constants.MIN_PERIOD_LENGTH_MSEC,
-        constants.MAX_PERIOD_LENGTH_MSEC,
-        constants.MIN_NUM_PERIODS
+        markings
     ))
 
     return training_pairs

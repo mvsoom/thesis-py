@@ -1,3 +1,4 @@
+"""Prior for the reference formant values F1, F2, F3"""
 from init import __memory__
 from lib import timit
 from lib import util
@@ -67,17 +68,17 @@ def yield_vowel_segments(d, phn):
         yield label, d[start:end]
 
 def yield_training_data(
-    fb_file, phn_file, wav_file,
-    return_full=False,
-    min_period_length_msec=constants.MIN_PERIOD_LENGTH_MSEC,
-    max_period_length_msec=constants.MAX_PERIOD_LENGTH_MSEC,
-    min_num_periods=constants.MIN_NUM_PERIODS
+    fb_file, phn_file, wav_file, return_full=False
 ):
     """
     Yield all training tuples consisting of Praat's estimated pitch period (msec),
     and the true and Praat-estimated formant frequencies F1-F3 averaged over
     (i.e., within) the pitch periods estimated by Praat, in Hz
     """
+    min_period_length_msec = constants.MIN_PERIOD_LENGTH_MSEC + constants._ZERO
+    max_period_length_msec = constants.MAX_PERIOD_LENGTH_MSEC - constants._ZERO
+    min_num_periods = constants.MIN_NUM_PERIODS
+    
     d, fs = read_wav_file_and_normalize(wav_file)
     phn = select_vowel_segments(phn_file)
     frame_midpoint_idx, F_true_frames = select_F_true(fb_file, fs)
@@ -187,22 +188,26 @@ def get_vtrformants_training_data(cacheid=452369):
         
         training_data = list(
             yield_training_data(
-                fb_file, phn_file, wav_file,
-                min_period_length_msec=constants.MIN_PERIOD_LENGTH_MSEC,
-                max_period_length_msec=constants.MAX_PERIOD_LENGTH_MSEC,
-                min_num_periods=constants.MIN_NUM_PERIODS
+                fb_file, phn_file, wav_file
             )
         )
         
         all_training_data.extend(training_data)
 
-    return all_training_data
+    # Organize into a dict
+    praat_T, true_F_trajectories, praat_F_trajectories\
+        = list(zip(*all_training_data)) # Unzip
+
+    return {
+        'praat_T': praat_T,
+        'true_F_trajectories': true_F_trajectories,
+        'praat_F_trajectories': praat_F_trajectories
+    }
 
 # Cannot be cached due to complex return value
 def _fit_formants_trajectory_kernel():
     """Fit Matern kernels to TIMIT/VTRFormants and return the MAP one"""
-    training_data = get_vtrformants_training_data()
-    true_F_trajectories = [p[1] for p in training_data]
+    true_F_trajectories = get_vtrformants_training_data()['true_F_trajectories']
     
     a, b = constants.MIN_FORMANT_FREQ_HZ, constants.MAX_FORMANT_FREQ_HZ
     bounds = jnp.array([
@@ -250,8 +255,8 @@ def fit_formants_trajectory_bijector(
 
 def _fit_praat_estimation_mean_and_cov():
     training_data = get_vtrformants_training_data()
-    true_F_trajectories = [p[1] for p in training_data]
-    praat_F_trajectories = [p[2] for p in training_data]
+    true_F_trajectories = training_data['true_F_trajectories']
+    praat_F_trajectories = training_data['praat_F_trajectories']
     
     b = fit_formants_trajectory_bijector(1)
     return bijectors.estimate_observation_noise_cov(
@@ -283,9 +288,9 @@ def formants_trajectory_prior(
     bijector = fit_formants_trajectory_bijector(num_pitch_periods)
     
     if praat_estimate is None:
-        name = 'FormantsTrajectoryPrior'
+        name = 'ReferenceFormantsTrajectoryPrior'
     else:
-        name = 'ConditionedFormantsTrajectoryPrior'
+        name = 'ConditionedReferenceFormantsTrajectoryPrior'
         mean, cov = fit_praat_estimation_mean_and_cov()
         bijector = bijectors.condition_nonlinear_coloring_trajectory_bijector(
             bijector, praat_estimate, cov, mean
@@ -305,6 +310,6 @@ def formants_marginal_prior():
     prior = tfd.TransformedDistribution(
         distribution=formants_trajectory_prior(1),
         bijector=squeeze_bijector,
-        name="FormantsMarginalPrior"
+        name="ReferenceFormantsMarginalPrior"
     )
     return prior # prior.sample(ns) shaped (ns, 3)
