@@ -67,7 +67,7 @@ def phi_transfer_matrix(t, M, T, L, poles):
 
 @partial(jit, static_argnames=("kernel", "M"))
 def sqrt_gamma_coefficients(kernel, var, scale, M, L):
-    """Calculate $\sqrt{S(-\lambda_m)}$"""
+    """Calculate $\sqrt{S(-\lambda_m)}$ which has units [rad/msec] if $L$ has units msec"""
     m = jnp.arange(1, M+1)
     gamma = kernel(var, scale).spectral_density(m*jnp.pi/L)
     return jnp.sqrt(gamma) # (M,)
