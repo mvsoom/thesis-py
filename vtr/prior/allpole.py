@@ -196,6 +196,7 @@ def crazy_yield_fitted_FBT_samples(
     verbose=True
 ):
     import random
+    random.seed()
     
     TFB_samples = get_TFB_samples()
     rng = np.random.default_rng(seed)
