@@ -5,6 +5,12 @@ _ZERO = 1e-3
 
 # We work up until 5 kHz
 FS_KHZ = 10.
+FS_HZ = 1000*FS_KHZ
+
+# Sampling power spectra
+DF = 1. # Hz
+def spectrum_frequencies():
+    return np.arange(0, FS_HZ/2, DF)
 
 # The boundary factor `c` (Riutort-Mayol 2020)
 BOUNDARY_FACTOR = 2.
