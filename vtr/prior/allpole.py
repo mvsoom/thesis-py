@@ -183,3 +183,43 @@ def yield_fitted_FBT_samples(
 
 def get_fitted_FBT_samples():
     return list(yield_fitted_FBT_samples())
+
+
+
+
+
+####
+
+def crazy_yield_fitted_FBT_samples(
+    seed=666789,
+    Ks=K_RANGE,
+    verbose=True
+):
+    import random
+    
+    TFB_samples = get_TFB_samples()
+    rng = np.random.default_rng(seed)
+    
+    for K in Ks:
+        for i, sample in enumerate(TFB_samples):
+            cacheid = rng.integers(int(1e8))
+            
+            if random.random() > 1/(50*len(Ks)):
+                continue
+            
+            print("accepted", K, i)
+            results = fit_FBT_sample(sample, K, cacheid)
+            
+            if verbose: print(K, i, results['logz'][-1])
+
+            yield dict(
+                K=K,
+                i=i,
+                sample=sample,
+                cacheid=cacheid,
+                results=results
+            )
+
+def crazy():
+    while True:
+        list(crazy_yield_fitted_FBT_samples())
