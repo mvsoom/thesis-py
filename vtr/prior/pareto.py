@@ -1,7 +1,13 @@
 import numpy as np
 import scipy.stats
 
-def sample(x0, xbar, size=1):
+def assign_xnullbar(K, xmin, xmax):
+    """Heurisic to assign the expected VTR frequency values"""
+    xbar = xmin + (xmax - xmin)/(K+1)*np.arange(1, K+1)
+    xnullbar = np.array([xmin, *xbar])
+    return xnullbar
+
+def sample_x(x0, xbar, size=1):
     K = len(xbar)
     X = [x0, *xbar]
 
@@ -16,7 +22,22 @@ def sample(x0, xbar, size=1):
     
     return x # (size, K)
 
-def sample_truncated(x0, xbar, xmax, size=1):
+def sample_x_ppf(q, J, F):
+    assert J == len(q) and len(F) >= J + 1
+
+    # Calculate scale parameters for the u ~ Exp(beta) such
+    # that the marginal moments agree with Ex
+    beta = [(F[j+1] - F[j])/F[j+1] for j in range(J)]
+    
+    # Draw the u
+    u = np.atleast_1d(scipy.stats.expon.ppf(q, scale=beta))
+    
+    # Transform to x
+    x0 = F[0]
+    x = [x0*np.exp(np.sum(u[0:j+1])) for j in range(J)]
+    return np.array(x)
+
+def sample_x_truncated(x0, xbar, xmax, size=1):
     def get_batch(size):
         x = sample(x0, xbar, size)
         keep = np.all(x <= xmax, axis=1)
@@ -42,18 +63,3 @@ def sample_jeffreys_ppf(q, bounds):
     b = np.log(upper[:J])
     x = a + q*(b-a)
     return np.exp(x)
-
-def sample_x_ppf(q, J, F):
-    assert J == len(q) and len(F) >= J + 1
-
-    # Calculate scale parameters for the u ~ Exp(beta) such
-    # that the marginal moments agree with Ex
-    beta = [(F[j+1] - F[j])/F[j+1] for j in range(J)]
-    
-    # Draw the u
-    u = np.atleast_1d(scipy.stats.expon.ppf(q, scale=beta))
-    
-    # Transform to x
-    x0 = F[0]
-    x = [x0*np.exp(np.sum(u[0:j+1])) for j in range(J)]
-    return np.array(x)
