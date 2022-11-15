@@ -204,7 +204,7 @@ def get_fitted_TFB_samples():
 ####
 
 def crazy_yield_fitted_TFB_samples(
-    seed=666789,
+    seed=6667890,
     Ks=K_RANGE,
     verbose=True
 ):
