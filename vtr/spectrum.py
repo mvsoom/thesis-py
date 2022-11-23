@@ -7,32 +7,18 @@ import scipy.signal
 BUTTERWORTH_FILTER_ORDER = 6
 PEAK_DISTANCE = 100. # Hz
 
-# Some sensible defaults in case of absence
-RHO_MEAN = 0.2
+# Some sensible defaults
+RHO_MEAN = 0.5
 H_SCALE_MEAN_dB = 1.
 
 # Hyperparameters for the cutoff frequency and peak prominence
 SPECTRUM_RIPPLE_PERIOD = 3.6 # Hz
 RHO_BETA = 1.
+RHO_ALPHA = 2.
 H_SCALE_dB = 1.
 
 # Hyperparameters for spectral tilt estimation
 GLOTTAL_FORMANT_HZ = 200. # Fulop & Disner (2011)
-
-def calculate_rho_alpha(
-    df=constants.DF,
-    period=SPECTRUM_RIPPLE_PERIOD,
-    beta=RHO_BETA
-):
-    """See test_peak.ipynb for rationale"""
-    quefrency = 1/period # sec
-    Fs = 1/df # sec
-    expected_rho = quefrency / (Fs/2)
-    
-    alpha = expected_rho*beta/(1 - expected_rho)
-    return alpha
-
-RHO_ALPHA = calculate_rho_alpha()
 
 def get_bandwidths_at_FWHM(envelope, peaks):
     prominences, left_bases, right_bases = scipy.signal.peak_prominences(
@@ -90,6 +76,11 @@ def get_formants_from_spectrum(
         return F, B, locals()
     else:
         return F, B
+
+def number_of_peaks(f, power):
+    F, B = get_formants_from_spectrum(f, power)
+    K = len(F)
+    return K
 
 def fit_tilt(
     f, power_spectrum, cutoff=GLOTTAL_FORMANT_HZ, return_interp=False

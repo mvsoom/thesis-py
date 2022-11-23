@@ -17,12 +17,12 @@ K_RANGE = (3, 4, 5, 6, 7, 8, 9, 10)
 SAMPLERARGS = {'sample': 'rslice', 'bootstrap': 10}
 RUNARGS = {'save_bounds': False, 'maxcall': int(3e5)}
 
-def transfer_function_power_dB(x, poles):
-    """x an array in kHz, poles in rad kHz"""
+def transfer_function_power_dB(f, poles):
+    """f is an array of frequencies in kHz, poles in rad kHz"""
     def labs(x):
         return np.log10(np.abs(x))
 
-    s = (1j)*x*2*np.pi # rad kHz
+    s = (1j)*f*2*np.pi # rad kHz
     G = np.sum(2*labs(poles))
     
     denom = np.sum(labs(s[:,None] - poles[None,:]) + labs(s[:,None] - np.conjugate(poles[None,:])), axis=1)
@@ -33,18 +33,13 @@ def analytical_tilt(K):
     tilt = -20.*K*np.log10(4) # = (12*K) dB/octave
     return tilt
 
-def number_of_peaks(f, power):
-    F, B = spectrum.get_formants_from_spectrum(f, power)
-    K = len(F)
-    return K
-
 @__memory__.cache
 def get_TFB_samples(
     num_samples=50,
     seed=312178
 ):
     prior = bandwidth.TFB_prior()
-    f = constants.spectrum_frequencies()
+    f = constants.spectrum_frequencies(constants.TIMIT_FS_HZ)
     
     def sample_reject(key):
         while True:
@@ -53,7 +48,7 @@ def get_TFB_samples(
             poles = core.make_poles(B, F)
             power = transfer_function_power_dB(f/1000, poles)
             
-            if number_of_peaks(f, power) == 3:
+            if spectrum.number_of_peaks(f, power) == 3:
                 break
             else:
                 warnings.warn("Rejected TFB sample that had merged peaks in its power spectrum")
@@ -131,7 +126,7 @@ def fit_TFB_sample(
         # Heuristically measure spectral tilt
         tilt = spectrum.fit_tilt(f, power)
         
-        if np.isnan(tilt) or tilt > 0.: # NaN occurs if badly conditioned, very rare
+        if np.isnan(tilt): # NaN occurs if badly conditioned, very rare
             return -np.inf
 
         F_err = np.sum(((F - F_true)/sigma_F)**2)

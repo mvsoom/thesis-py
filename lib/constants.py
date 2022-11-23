@@ -9,8 +9,9 @@ FS_HZ = 1000*FS_KHZ
 
 # Sampling power spectra
 DF = 1. # Hz
-def spectrum_frequencies():
-    return np.arange(0, FS_HZ/2, DF)
+TIMIT_FS_HZ = 16000
+def spectrum_frequencies(fs=FS_HZ):
+    return np.arange(0, fs/2, DF)
 
 # The boundary factor `c` (Riutort-Mayol 2020)
 BOUNDARY_FACTOR = 2.
@@ -44,7 +45,7 @@ SIGMA_B_REFERENCE_HZ = np.array([4., 14., 58.])
 
 # Reference spectral tilt for the filter envelope and sensitivity
 FILTER_SPECTRAL_TILT_DB = -2.
-SIGMA_TILT_DB = 2.
+SIGMA_TILT_DB = 12. # Take into account the sloppiness of our estimator
 
 # In APLAWD and VTRFormants, reject a voiced group or vowel segment
 # if it has less than `MIN_NUM_PERIODS` pitch periods

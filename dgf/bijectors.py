@@ -29,15 +29,15 @@ def get_log_stats(samples, bounds):
     in the *original* domain.
     """
     # Transform variables to log domain in-place
-    samples = jnp.log(samples)
-    bounds = jnp.log(bounds)
+    samples = np.log(samples)
+    bounds = np.log(bounds)
 
     # Get Gaussian stats
-    mean = jnp.mean(samples, axis=0)
-    cov = jnp.atleast_2d(jnp.cov(samples.T))
-    sigma = jnp.sqrt(jnp.diag(cov))
-    corr = jnp.diag(1/sigma) @ cov @ jnp.diag(1/sigma)
-    L_corr = jnp.linalg.cholesky(stabilize(corr))
+    mean = np.mean(samples, axis=0)
+    cov = np.atleast_2d(np.cov(samples.T))
+    sigma = np.sqrt(np.diag(cov))
+    corr = np.diag(1/sigma) @ cov @ np.diag(1/sigma)
+    L_corr = np.linalg.cholesky(stabilize(corr))
     
     logstats = dict(
         samples=samples, bounds=bounds, mean=mean,
