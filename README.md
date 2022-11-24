@@ -1,5 +1,9 @@
 # README
 
+# TODO:
+
+https://github.com/garrettj403/SciencePlots
+
 # Activating the environment
 
 `$ source activate`

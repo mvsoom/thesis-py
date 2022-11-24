@@ -1,7 +1,6 @@
 """Utilities for TIMIT and TIMIT-derived VTRFormants datasets"""
 from init import __datadir__
 from lib import praat
-from dgf.prior import period
 from lib import htkio
 
 import pathlib

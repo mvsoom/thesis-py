@@ -7,11 +7,11 @@ import scipy.signal
 BUTTERWORTH_FILTER_ORDER = 6
 PEAK_DISTANCE = 100. # Hz
 
-# Some sensible defaults
-RHO_MEAN = 0.5
-H_SCALE_MEAN_dB = 1.
+# Default minimum peak prominence
+H_DEFAULT_dB = 3.
 
 # Hyperparameters for the cutoff frequency and peak prominence
+# (Currently not used)
 SPECTRUM_RIPPLE_PERIOD = 3.6 # Hz
 RHO_BETA = 1.
 RHO_ALPHA = 2.
@@ -52,15 +52,18 @@ def smooth_spectrum(
 def get_formants_from_spectrum(
     f,
     power,
-    rho=RHO_MEAN,
-    h=H_SCALE_MEAN_dB,
+    rho=None,
+    h=H_DEFAULT_dB,
     return_full=False,
     butterworth_filter_order=BUTTERWORTH_FILTER_ORDER,
     peak_distance=PEAK_DISTANCE
 ):
     """Estimate formants by peak picking off a low-pass smoothed power spectrum"""
     # Smooth spectrum based on rho
-    smoothed = smooth_spectrum(power, rho, butterworth_filter_order)
+    if rho is not None:
+        smoothed = smooth_spectrum(power, rho, butterworth_filter_order)
+    else:
+        smoothed = power
     
     # Find peaks in the smoothed spectrum based on h
     df = f[1] - f[0]
@@ -77,8 +80,8 @@ def get_formants_from_spectrum(
     else:
         return F, B
 
-def number_of_peaks(f, power):
-    F, B = get_formants_from_spectrum(f, power)
+def number_of_peaks(f, power, **kwargs):
+    F, B = get_formants_from_spectrum(f, power, **kwargs)
     K = len(F)
     return K
 

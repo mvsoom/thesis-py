@@ -1,5 +1,8 @@
 """Fit the p(T, F^R, B^R) prior for T and reference formant frequency and bandwidh"""
+from init import __memory__
+from vtr import spectrum
 from vtr.prior import formant
+from vtr.prior import allpole
 from lib import constants
 from dgf import bijectors
 
@@ -10,6 +13,8 @@ import tensorflow_probability.substrates.jax.bijectors as tfb
 
 import numpy as np
 import scipy.stats
+import warnings
+import joblib
 
 def _hawks_bandwidth(T, F):
     """Implement Hawks+ (1995) Eq. (1)"""
@@ -131,3 +136,83 @@ def TFB_prior(cacheid=3325495):
         name='TFBPrior'
     )
     return prior # prior.sample(ns) shaped (ns, TFB_NDIM)
+
+@__memory__.cache
+def get_TFB_samples(
+    num_samples=50,
+    seed=312178
+):
+    """Get samples to fit p(x,y) priors to"""
+    prior = TFB_prior()
+    f = constants.spectrum_frequencies(constants.TIMIT_FS_HZ)
+    
+    def sample_reject(key):
+        while True:
+            T, *FB = prior.sample(seed=key)
+            F, B = np.split(np.array(FB), 2)
+            power = allpole.transfer_function_power_dB(f, F, B)
+            
+            if spectrum.number_of_peaks(f, power) == 3:
+                break
+            else:
+                warnings.warn("Rejected TFB sample that had merged peaks in its power spectrum")
+                _, key = jax.random.split(key)
+        
+        sample = dict(
+            T = float(T),
+            F = F,
+            B = B,
+            f = f,
+            power = power
+        )
+        return sample
+    
+    keys = jax.random.split(jax.random.PRNGKey(seed), num_samples)
+    samples = [sample_reject(key) for key in keys]
+    return samples
+
+def yield_fitted_TFB_samples(
+    fit_func,
+    seed,
+    Ks,
+    fit_func_kwargs={},
+    parallel=(1,0)
+):
+    TFB_samples = get_TFB_samples()
+    rng = np.random.default_rng(seed)
+    
+    n = 0
+    for K in Ks:
+        for i, sample in enumerate(TFB_samples):
+            cacheid = rng.integers(int(1e8))
+            
+            n += 1
+            if (n % parallel[0]) != parallel[1]:
+                continue
+            
+            results = fit_func(sample, K, cacheid, **fit_func_kwargs)
+
+            yield dict(
+                K=K,
+                i=i,
+                sample=sample,
+                cacheid=cacheid,
+                results=results
+            )
+
+def _flatten(l):
+    # https://stackoverflow.com/a/952952/6783015
+    return [item for sublist in l for item in sublist]
+    
+def get_fitted_TFB_samples(n_jobs=1, **kwargs):
+    def job(div):
+        return list(yield_fitted_TFB_samples(parallel=(n_jobs, div), **kwargs))
+    
+    if n_jobs == 1:
+        return job(0)
+    else:
+        return _flatten(
+            joblib.Parallel(n_jobs=n_jobs, batch_size=1, verbose=100)(
+                joblib.delayed(job)(div) for div in range(n_jobs)
+            )
+        )

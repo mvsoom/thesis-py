@@ -8,9 +8,14 @@ def normalize_power(d, return_multiplier=False):
     normalized = multiplier*d
     return (normalized, multiplier) if return_multiplier else normalized
 
-def dyplot(results, names=None):
+def dyplot(results, names=None, runplot=True):
     display(results.summary())
     display('Information (bans)', results.information[-1] * np.log10(np.exp(1)))
+    
+    if runplot:
+        fig, axes = dynesty.plotting.runplot(results)
+        plt.tight_layout()
+        plt.show()
 
     fig, axes = dynesty.plotting.traceplot(
         results, show_titles=True,

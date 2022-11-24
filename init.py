@@ -7,6 +7,7 @@ __all__ = [
     '__datadir__',
     '__cachedir__',
     '__memory__',
+    '__cache__',
     'sns',
     'jax',
     'jnp',
@@ -31,10 +32,18 @@ def __cachedir__(s=''):
 # NOTE: joblib cannot cache arbitrary functions, because it cannot
 # hash/pickle all possible input/output values. In particular, it
 # isn't able to memoize functions that return `tfb.Bijector`s or
-# or `tfd.Distribution`s. In practice, therefore, we focus memoization
-# on simple objects such as `Dict`s and `dynesty`'s sampler results.
+# or `tfd.Distribution`s. For these functions we use @__cache__
+# which calculates the return value of the function once when it
+# is called the first time and then caches it.
 import joblib
 __memory__ = joblib.Memory(__cachedir__('joblib'), verbose=2)
+
+def __cache__(func):
+    def cached_func():
+        if not hasattr(cached_func, "_cache"):
+            cached_func._cache = func()
+        return cached_func._cache
+    return cached_func
 
 # Configure global plotting options
 import seaborn as sns

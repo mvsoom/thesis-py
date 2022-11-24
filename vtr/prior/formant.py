@@ -1,5 +1,5 @@
 """Prior for the reference formant values F1, F2, F3"""
-from init import __memory__
+from init import __memory__, __cache__
 from lib import timit
 from lib import util
 from lib import praat
@@ -204,8 +204,8 @@ def get_vtrformants_training_data(cacheid=452369):
         'praat_F_trajectories': praat_F_trajectories
     }
 
-# Cannot be cached due to complex return value
-def _fit_formants_trajectory_kernel():
+@__cache__
+def fit_formants_trajectory_kernel():
     """Fit Matern kernels to TIMIT/VTRFormants and return the MAP one"""
     true_F_trajectories = get_vtrformants_training_data()['true_F_trajectories']
     
@@ -236,12 +236,6 @@ def _fit_formants_trajectory_kernel():
     best_fit = max(*kernel_fits, key=lambda fit_result: logz(fit_result))
     return best_fit # == (kernel_name, bijector, results)
 
-def fit_formants_trajectory_kernel(
-    _best_fit = _fit_formants_trajectory_kernel()
-):
-    """Cache `_fit_formants_trajectory_kernel()`"""
-    return _best_fit
-
 def fit_formants_trajectory_bijector(
     num_pitch_periods=None
 ):
@@ -253,21 +247,16 @@ def fit_formants_trajectory_bijector(
 
     return bijector
 
-def _fit_praat_estimation_mean_and_cov():
+@__cache__
+def fit_praat_estimation_mean_and_cov():
     training_data = get_vtrformants_training_data()
     true_F_trajectories = training_data['true_F_trajectories']
     praat_F_trajectories = training_data['praat_F_trajectories']
     
     b = fit_formants_trajectory_bijector(1)
-    return bijectors.estimate_observation_noise_cov(
+    mean, cov = bijectors.estimate_observation_noise_cov(
         b, true_F_trajectories, praat_F_trajectories, return_mean=True
     )
-
-def fit_praat_estimation_mean_and_cov(
-    _ret = _fit_praat_estimation_mean_and_cov()
-):
-    """Cache `_fit_praat_estimation_mean_and_cov()`"""
-    mean, cov = _ret
     return mean, cov
 
 def maximum_likelihood_envelope_params(results):

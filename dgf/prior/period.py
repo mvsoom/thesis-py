@@ -1,4 +1,4 @@
-from init import __datadir__, __memory__
+from init import __datadir__, __memory__, __cache__
 from lib import praat
 from lib import aplawd
 from dgf import bijectors
@@ -159,8 +159,8 @@ def get_aplawd_training_pairs_subset(
 
     return subset
 
-# Cannot be cached due to complex return value
-def _fit_period_trajectory_kernel():
+@__cache__
+def fit_period_trajectory_kernel():
     """Fit Matern kernels to the APLAWD database and return the MAP one"""
     subset = get_aplawd_training_pairs_subset()
     samples = [d[0][:,None] for d in subset]
@@ -190,12 +190,6 @@ def _fit_period_trajectory_kernel():
     best_fit = max(*kernel_fits, key=lambda fit_result: logz(fit_result))
     return best_fit # == (kernel_name, bijector, results)
 
-def fit_period_trajectory_kernel(
-    _best_fit = _fit_period_trajectory_kernel()
-):
-    """Cache `_fit_period_trajectory_kernel()`"""
-    return _best_fit
-
 def fit_period_trajectory_bijector(
     num_pitch_periods=None
 ):
@@ -207,7 +201,8 @@ def fit_period_trajectory_bijector(
 
     return bijector
 
-def _fit_praat_estimation_cov():
+@__cache__
+def fit_praat_estimation_cov():
     subset = get_aplawd_training_pairs_subset()
     true_samples  = [d[0][:,None] for d in subset]
     praat_samples = [d[1][:,None] for d in subset]
@@ -216,7 +211,8 @@ def _fit_praat_estimation_cov():
     cov = bijectors.estimate_observation_noise_cov(b, true_samples, praat_samples)
     return cov
 
-def _fit_praat_estimation_mean():
+@__cache__
+def fit_praat_estimation_mean():
     subset = get_aplawd_training_pairs_subset()
     true_samples  = [d[0][:,None] for d in subset]
     praat_samples = [d[1][:,None] for d in subset]
@@ -224,12 +220,6 @@ def _fit_praat_estimation_mean():
     b = fit_period_trajectory_bijector(1)
     mean = bijectors.estimate_observation_noise_mean(b, true_samples, praat_samples)
     return mean
-
-def fit_praat_estimation_cov(
-    _cov = _fit_praat_estimation_cov()
-):
-    """Cache `_fit_praat_estimation_cov()`"""
-    return _cov
 
 def fit_praat_estimation_sigma():
     """Maximum likelihood fit of Praat's observation error's sigma"""

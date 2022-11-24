@@ -45,7 +45,7 @@ SIGMA_B_REFERENCE_HZ = np.array([4., 14., 58.])
 
 # Reference spectral tilt for the filter envelope and sensitivity
 FILTER_SPECTRAL_TILT_DB = -2.
-SIGMA_TILT_DB = 12. # Take into account the sloppiness of our estimator
+SIGMA_TILT_DB = 2. + 6. # Take into account the sloppiness (+6 dB) of our estimator
 
 # In APLAWD and VTRFormants, reject a voiced group or vowel segment
 # if it has less than `MIN_NUM_PERIODS` pitch periods
