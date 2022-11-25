@@ -88,14 +88,20 @@ def overlap_matrix(x, y):
     ])
     return S
 
+def _nan_like(a):
+    return np.nan*a
+
 def mvn_precision_ppf(q, P):
     """Sample from a zero-mean MVN parametrized by its precision matrix `P`
     See http://www.statsathome.com/2018/10/19/sampling-from-multivariate-normal-precision-and-covariance-parameterizations/"""
     w = scipy.special.ndtri(q)
-    L = np.linalg.cholesky(P)
-    z = scipy.linalg.solve_triangular(L, w, lower=True)
-    return z
-
+    try:
+        L = np.linalg.cholesky(P)
+        z = scipy.linalg.solve_triangular(L, w, lower=True)
+        return z
+    except np.linalg.LinAlgError:
+        return _nan_like(q)
+    
 def amplitudes_prior_ppf(q, x, y, mu2=1/1000):
     """The VTRs `x, y` are in Hz, so `mu2` is in sec and defaults to 1 msec"""
     K = len(x)
@@ -138,6 +144,9 @@ def fit_TFB_sample(
         B_true = sample['B']
     ):
         x, y, ab = unpack(params)
+        
+        if np.any(np.isnan(ab)):
+            return -np.inf # Semi-definite overlap matrix S in p(a,b|x,y)
 
         if np.any(x >= xmax):
             return -np.inf
