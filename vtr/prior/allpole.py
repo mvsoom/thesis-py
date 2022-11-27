@@ -3,6 +3,7 @@ from vtr.prior import bandwidth
 from vtr import spectrum
 from lib import constants
 from vtr.prior import pareto
+from dgf import core
 
 import numpy as np
 import jax
@@ -31,6 +32,14 @@ def transfer_function_power_dB(f, x, y):
     denom = np.sum(labs(s[:,None] - poles[None,:]) + labs(s[:,None] - np.conjugate(poles[None,:])), axis=1)
     return 20.*(G - denom)
 
+def impulse_response(t, x, y):
+    """t in msec, x and y in Hz"""
+    poles = (-np.pi*y + 2*np.pi*(1j)*x)/1000 # kHz
+    c = core.pole_coefficients(poles)
+    Y = np.real(2.*c[None,:]*np.exp(t[:,None]*poles[None,:]))
+    h = np.sum(Y, axis=1)
+    return h
+    
 def analytical_tilt(K):
     """Let s -> infty such that the all the poles look like zeros"""
     tilt = -20.*K*np.log10(4) # = (12*K) dB/octave
