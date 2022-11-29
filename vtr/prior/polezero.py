@@ -5,12 +5,12 @@ from lib import constants
 from vtr.prior import pareto
 
 import numpy as np
-import jax
 
 import warnings
 import dynesty
 import scipy.stats
 import scipy.linalg
+import scipy.special
 
 K_RANGE = (3, 4, 5, 6, 7, 8, 9, 10)
 
@@ -23,8 +23,8 @@ def transfer_function_power_dB(f, x, y, ab, normalize_gain=False):
     `f, x, y` given in Hz.
     
     If `normalize_gain` normalize s.t. the power spectrum is zero at
-    zero frequency. (But this type of normalization is inferior to
-    normalization using a good prior for the amplitudes `ab`.)
+    zero frequency. (But this type of normalization is not dimensionally
+    consistent and should be avoided.)
     """
     AB = ab[:,None]
     X = x[:,None]
@@ -110,26 +110,35 @@ def amplitudes_prior_ppf(q, x, y, mu2=1/1000):
     ab = mvn_precision_ppf(q, precision_matrix)
     return ab
 
-def eval_G(t, x, y):
-    """Note that t and (x,y) must have conjugate dimensions"""
-    K = len(x)
-    G = np.empty((len(t), 2*K))
-    X, Y, T = x[None,:], y[None,:], t[:,None]
-    
-    G[:, :K] = np.cos(2.*np.pi*X*T)*np.exp(-np.pi*Y*T)
-    G[:, K:] = np.sin(2.*np.pi*X*T)*np.exp(-np.pi*Y*T)
-    return G # (len(t), 2K)
+def pole_coefficients(ab):
+    a, b = np.split(ab, 2)
+    c = (a - (1j)*b)/2
+    return c
+
+def amplitudes(c):
+    """Calculate the a (cos) and b (sin) amplitudes corresponding with the pole coefficients c. This is the inverse of pole_coefficients()"""
+    a = np.real(c + np.conj(c))
+    b = np.real((1j)*(c - np.conj(c)))
+    ab = np.concatenate((a, b))
+    return ab
+
+def poles(x, y):
+    return -np.pi*y + 2*np.pi*(1j)*x
 
 def impulse_response(t, x, y, ab):
     """t is in msec, (x, y) in Hz"""
-    G = eval_G(t, x/1000, y/1000)
-    h = G @ ab
+    c = pole_coefficients(ab)
+    p = poles(x, y)/1000. # kHz
+    h = impulse_response_cp(t, c, p)
     return h
+
+def impulse_response_cp(t, c, p):
+    return np.real(2.*c[None,:]*np.exp(t[:,None]*p[None,:])).sum(axis=1)
 
 def impulse_response_energy(x, y, ab):
     """Return the analytical impulse response energy in msec"""
-    S = overlap_matrix(x, y) # [sec]
-    energy = (ab.T @ S @ ab)*1000 # [msec]
+    S = overlap_matrix(x, y) # sec
+    energy = (ab.T @ S @ ab)*1000. # msec
     return energy
 
 def fit_TFB_sample(
