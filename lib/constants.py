@@ -39,13 +39,16 @@ MAX_FORMANT_BAND_HZ = 500.
 MIN_Y_HZ = 20.
 MAX_Y_HZ = FS_HZ/2
 
-# The reference formant tolerances from Pinson (1963)
-SIGMA_F_REFERENCE_HZ = np.array([2., 7., 29.])
-SIGMA_B_REFERENCE_HZ = np.array([4., 14., 58.])
+# The reference formant F and B tolerances for loosely based on Pinson (1963)
+SIGMA_FB_REFERENCE_HZ = np.array([5., 10., 15.])
 
 # Reference spectral tilt for the filter envelope and sensitivity
 FILTER_SPECTRAL_TILT_DB = -2.
 SIGMA_TILT_DB = 2. + 6. # Take into account the sloppiness (+6 dB) of our estimator
+
+# Expected value of the VT impulse response energy
+IMPULSE_RESPONSE_ENERGY_MSEC = 1.
+SIGMA_IMPULSE_RESPONSE_ENERGY_MSEC = 1.
 
 # In APLAWD and VTRFormants, reject a voiced group or vowel segment
 # if it has less than `MIN_NUM_PERIODS` pitch periods

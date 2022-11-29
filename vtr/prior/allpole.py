@@ -14,7 +14,7 @@ import scipy.stats
 K_RANGE = (3, 4, 5, 6, 7, 8, 9, 10)
 
 SAMPLERARGS = {'sample': 'rslice', 'bootstrap': 10}
-RUNARGS = {'save_bounds': False, 'maxcall': int(3e5)}
+RUNARGS = {'save_bounds': False, 'maxcall': int(1e7)}
 
 def transfer_function_power_dB(f, x, y):
     """Calculate the AP power spectrum of the impulse response in dB
@@ -31,14 +31,6 @@ def transfer_function_power_dB(f, x, y):
     
     denom = np.sum(labs(s[:,None] - poles[None,:]) + labs(s[:,None] - np.conjugate(poles[None,:])), axis=1)
     return 20.*(G - denom)
-
-def impulse_response(t, x, y):
-    """t in msec, x and y in Hz"""
-    poles = (-np.pi*y + 2*np.pi*(1j)*x)/1000 # kHz
-    c = core.pole_coefficients(poles)
-    Y = np.real(2.*c[None,:]*np.exp(t[:,None]*poles[None,:]))
-    h = np.sum(Y, axis=1)
-    return h
     
 def analytical_tilt(K):
     """Let s -> infty such that the all the poles look like zeros"""
@@ -53,10 +45,12 @@ def fit_TFB_sample(
     xmax=constants.MAX_X_HZ,
     ymin=constants.MIN_Y_HZ,
     ymax=constants.MAX_Y_HZ,
-    sigma_F=constants.SIGMA_F_REFERENCE_HZ,
-    sigma_B=constants.SIGMA_B_REFERENCE_HZ,
+    sigma_F=constants.SIGMA_FB_REFERENCE_HZ,
+    sigma_B=constants.SIGMA_FB_REFERENCE_HZ,
     tilt_target=constants.FILTER_SPECTRAL_TILT_DB,
     sigma_tilt=constants.SIGMA_TILT_DB,
+    energy_target=constants.IMPULSE_RESPONSE_ENERGY_MSEC,
+    sigma_energy=constants.SIGMA_IMPULSE_RESPONSE_ENERGY_MSEC,
     samplerargs=SAMPLERARGS,
     runargs=RUNARGS
 ):
@@ -130,6 +124,14 @@ def fit_TFB_sample(
     
     results = run_nested(cacheid, samplerargs, runargs)
     return results
+
+def impulse_response(t, x, y):
+    """t in msec, x and y in Hz"""
+    poles = (-np.pi*y + 2*np.pi*(1j)*x)/1000 # kHz
+    c = core.pole_coefficients(poles)
+    Y = np.real(2.*c[None,:]*np.exp(t[:,None]*poles[None,:]))
+    h = np.sum(Y, axis=1)
+    return h
 
 def get_fitted_TFB_samples(n_jobs=1):
     return bandwidth.get_fitted_TFB_samples(

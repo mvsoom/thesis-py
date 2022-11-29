@@ -15,7 +15,7 @@ import scipy.linalg
 K_RANGE = (3, 4, 5, 6, 7, 8, 9, 10)
 
 SAMPLERARGS = {'sample': 'rslice', 'bootstrap': 10}
-RUNARGS = {'save_bounds': False, 'maxcall': int(3e5)}
+RUNARGS = {'save_bounds': False, 'maxcall': int(1e7)}
 
 def transfer_function_power_dB(f, x, y, ab, normalize_gain=False):
     """Calculate the PZ power spectrum of the impulse response in dB
@@ -110,6 +110,28 @@ def amplitudes_prior_ppf(q, x, y, mu2=1/1000):
     ab = mvn_precision_ppf(q, precision_matrix)
     return ab
 
+def eval_G(t, x, y):
+    """Note that t and (x,y) must have conjugate dimensions"""
+    K = len(x)
+    G = np.empty((len(t), 2*K))
+    X, Y, T = x[None,:], y[None,:], t[:,None]
+    
+    G[:, :K] = np.cos(2.*np.pi*X*T)*np.exp(-np.pi*Y*T)
+    G[:, K:] = np.sin(2.*np.pi*X*T)*np.exp(-np.pi*Y*T)
+    return G # (len(t), 2K)
+
+def impulse_response(t, x, y, ab):
+    """t is in msec, (x, y) in Hz"""
+    G = eval_G(t, x/1000, y/1000)
+    h = G @ ab
+    return h
+
+def impulse_response_energy(x, y, ab):
+    """Return the analytical impulse response energy in msec"""
+    S = overlap_matrix(x, y) # [sec]
+    energy = (ab.T @ S @ ab)*1000 # [msec]
+    return energy
+
 def fit_TFB_sample(
     sample,
     K,
@@ -118,10 +140,12 @@ def fit_TFB_sample(
     xmax=constants.MAX_X_HZ,
     ymin=constants.MIN_Y_HZ,
     ymax=constants.MAX_Y_HZ,
-    sigma_F=constants.SIGMA_F_REFERENCE_HZ,
-    sigma_B=constants.SIGMA_B_REFERENCE_HZ,
+    sigma_F=constants.SIGMA_FB_REFERENCE_HZ,
+    sigma_B=constants.SIGMA_FB_REFERENCE_HZ,
     tilt_target=constants.FILTER_SPECTRAL_TILT_DB,
     sigma_tilt=constants.SIGMA_TILT_DB,
+    energy_target=constants.IMPULSE_RESPONSE_ENERGY_MSEC,
+    sigma_energy=constants.SIGMA_IMPULSE_RESPONSE_ENERGY_MSEC,
     samplerargs=SAMPLERARGS,
     runargs=RUNARGS
 ):
@@ -139,7 +163,7 @@ def fit_TFB_sample(
 
     def loglike(
         params,
-        f = sample['f'][::2],
+        f = sample['f'],
         F_true = sample['F'],
         B_true = sample['B']
     ):
@@ -163,17 +187,21 @@ def fit_TFB_sample(
         if len(F) != 3:
             return -np.inf
         
-        # Heuristically measure spectral tilt
-        tilt = spectrum.fit_tilt(f, power)
+        # Heuristically measure spectral tilt starting from F3(true)
+        tilt = spectrum.fit_tilt(f, power, cutoff=F_true[-1])
         
         if np.isnan(tilt): # NaN occurs if badly conditioned, very rare
             return -np.inf
+        
+        # Calculate impulse response energy (in msec)
+        energy = impulse_response_energy(x, y, ab)
 
         F_err = np.sum(((F - F_true)/sigma_F)**2)
         B_err = np.sum(((B - B_true)/sigma_B)**2)
         tilt_err = ((tilt - tilt_target)/sigma_tilt)**2
+        energy_err = ((energy - energy_target)/sigma_energy)**2
 
-        return -(F_err + B_err + tilt_err)/2
+        return -(F_err + B_err + tilt_err + energy_err)/2
 
     def ptform(u):
         ux, uy, uab = unpack(u)

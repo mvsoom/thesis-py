@@ -139,36 +139,26 @@ def TFB_prior(cacheid=3325495):
 
 @__memory__.cache
 def get_TFB_samples(
-    num_samples=50,
+    num_samples=200,
     seed=312178
 ):
     """Get samples to fit p(x,y) priors to"""
     prior = TFB_prior()
-    f = constants.spectrum_frequencies(constants.TIMIT_FS_HZ)
     
-    def sample_reject(key):
-        while True:
-            T, *FB = prior.sample(seed=key)
-            F, B = np.split(np.array(FB), 2)
-            power = allpole.transfer_function_power_dB(f, F, B)
-            
-            if spectrum.number_of_peaks(f, power) == 3:
-                break
-            else:
-                warnings.warn("Rejected TFB sample that had merged peaks in its power spectrum")
-                _, key = jax.random.split(key)
-        
+    def sample(key):
+        T, *FB = prior.sample(seed=key)
+        F, B = np.split(np.array(FB), 2)
+        f = constants.spectrum_frequencies(constants.TIMIT_FS_HZ)[::2]
         sample = dict(
             T = float(T),
             F = F,
             B = B,
-            f = f,
-            power = power
+            f = f
         )
         return sample
     
     keys = jax.random.split(jax.random.PRNGKey(seed), num_samples)
-    samples = [sample_reject(key) for key in keys]
+    samples = [sample(key) for key in keys]
     return samples
 
 def yield_fitted_TFB_samples(
