@@ -102,11 +102,12 @@ def mvn_precision_ppf(q, P):
     except np.linalg.LinAlgError:
         return _nan_like(q)
     
-def amplitudes_prior_ppf(q, x, y, mu2=1/1000):
-    """The VTRs `x, y` are in Hz, so `mu2` is in sec and defaults to 1 msec"""
+def amplitudes_prior_ppf(q, x, y, E_msec=1.):
+    """The VTRs `x, y` are in Hz, so `E` must be in sec and defaults to 1 msec"""
     K = len(x)
+    E = E_msec/1000 # sec
     S = overlap_matrix(x, y)
-    precision_matrix = (2*K)/mu2*S
+    precision_matrix = (2*K)/E*S
     ab = mvn_precision_ppf(q, precision_matrix)
     return ab
 

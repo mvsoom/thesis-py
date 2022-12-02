@@ -34,18 +34,18 @@ def analytical_tilt(K):
     tilt = -20.*K*np.log10(4) # = (12*K) dB/octave
     return tilt
 
-def g_prior_ppf(q, x, y, mu2_msec=1.):
-    """p(g|x,y) = N(0, sigma² = mu2_msec/unscaled_energy)"""
+def g_prior_ppf(q, x, y, E_msec=1.):
+    """p(g|x,y) = N(0, sigma² = E_msec/unscaled_energy)"""
     w = scipy.special.ndtri(q)
     unscaled_energy = unscaled_impulse_response_energy(x, y) # kHz
-    sigma = np.sqrt(mu2_msec/unscaled_energy) # msec
+    sigma = np.sqrt(E_msec/unscaled_energy) # msec
     g = w*sigma
     return g # msec
 
-def _g_prior_ppf_exp(q, x, y, mu2_msec=1.):
-    """p(g²|x,y) = Exp(expval = mu2_msec/unscaled_energy)"""
+def _g_prior_ppf_exp(q, x, y, E_msec=1.):
+    """p(g²|x,y) = Exp(expval = E_msec/unscaled_energy)"""
     unscaled_energy = unscaled_impulse_response_energy(x, y) # kHz
-    expval = mu2_msec/unscaled_energy # msec²
+    expval = E_msec/unscaled_energy # msec²
     return np.sqrt(-np.log(q)*expval) # msec
 
 def excluded_pole_product(p):
