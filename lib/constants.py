@@ -48,7 +48,6 @@ SIGMA_TILT_DB = 2. + 6. # Take into account the sloppiness (+6 dB) of our estima
 
 # Expected value of the VT impulse response energy
 IMPULSE_RESPONSE_ENERGY_MSEC = 1.
-SIGMA_IMPULSE_RESPONSE_ENERGY_MSEC = 1.
 
 # In APLAWD and VTRFormants, reject a voiced group or vowel segment
 # if it has less than `MIN_NUM_PERIODS` pitch periods

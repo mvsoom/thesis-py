@@ -5,6 +5,7 @@ from vtr.prior import formant
 from vtr.prior import allpole
 from lib import constants
 from dgf import bijectors
+from vtr.prior import pareto
 
 import jax
 import jax.numpy as jnp
@@ -15,6 +16,11 @@ import numpy as np
 import scipy.stats
 import warnings
 import joblib
+
+import dynesty
+import scipy.stats
+import scipy.linalg
+import scipy.special
 
 def _hawks_bandwidth(T, F):
     """Implement Hawks+ (1995) Eq. (1)"""
@@ -137,6 +143,13 @@ def TFB_prior(cacheid=3325495):
     )
     return prior # prior.sample(ns) shaped (ns, TFB_NDIM)
 
+##########################################
+# TFB samples and fitting them with VTRs #
+##########################################
+SAMPLERARGS = {'sample': 'rslice', 'bootstrap': 10}
+RUNARGS = {'save_bounds': False, 'maxcall': int(1e7)}
+NUM_LOGL_SAMPLES = 1
+
 @__memory__.cache
 def get_TFB_samples(
     num_samples=200,
@@ -161,11 +174,116 @@ def get_TFB_samples(
     samples = [sample(key) for key in keys]
     return samples
 
+def fit_TFB_sample(
+    sample,
+    vtfilter,
+    cacheid,
+    return_full=False,
+    xmin=constants.MIN_X_HZ,
+    xmax=constants.MAX_X_HZ,
+    ymin=constants.MIN_Y_HZ,
+    ymax=constants.MAX_Y_HZ,
+    sigma_F=constants.SIGMA_FB_REFERENCE_HZ,
+    sigma_B=constants.SIGMA_FB_REFERENCE_HZ,
+    tilt_target=constants.FILTER_SPECTRAL_TILT_DB,
+    sigma_tilt=constants.SIGMA_TILT_DB,
+    samplerargs=SAMPLERARGS,
+    runargs=RUNARGS,
+    nloglsamples=NUM_LOGL_SAMPLES
+):
+    K = vtfilter.K
+    ndim = 2*K
+    dimlabels = [f"${c}_{{{i+1}}}$" for c in ('x', 'y') for i in range(K)]
+
+    xnullbar = pareto.assign_xnullbar(K, xmin, xmax)
+    band_bounds = (
+        np.array([ymin]*K), np.array([ymax]*K)
+    )
+    
+    f = sample['f']
+    F_true = sample['F']
+    B_true = sample['B']
+    
+    def squared_error(F, B, tilt):
+        F_err = np.sum(((F - F_true)/sigma_F)**2)
+        B_err = np.sum(((B - B_true)/sigma_B)**2)
+        tilt_err = ((tilt - tilt_target)/sigma_tilt)**2
+        return F_err + B_err + tilt_err
+
+    def unpack(params):
+        x, y = np.split(params, 2)
+        return x, y
+
+    def loglike(power):
+        # Calculate pole-zero transfer function
+        if np.isnan(power[0]):
+            return -np.inf # Semi-definite overlap matrix S in p(a,b|x,y)
+
+        # Heuristically measure formants
+        try:
+            F, B = spectrum.get_formants_from_spectrum(f, power)
+        except np.linalg.LinAlgError:
+            return -np.inf # If fitting a linear curve fails (very rare)
+
+        # Impose strictly three formants in the spectrum
+        if len(F) != 3:
+            return -np.inf
+        
+        # Heuristically measure spectral tilt starting from F3(true)
+        tilt = spectrum.fit_tilt(f, power, cutoff=F_true[-1])
+        
+        if np.isnan(tilt): # NaN occurs if badly conditioned (very rare)
+            return -np.inf
+        
+        # Calculate log likelihood as square loss
+        F_err = np.sum(((F - F_true)/sigma_F)**2)
+        B_err = np.sum(((B - B_true)/sigma_B)**2)
+        tilt_err = ((tilt - tilt_target)/sigma_tilt)**2
+        logl = -(F_err + B_err + tilt_err)/2
+        return logl
+    
+    def loglike_montecarlo(params, ws):
+        x, y = unpack(params)
+        if np.any(x >= xmax):
+            return -np.inf
+        
+        # Calculate cheap MC estimate of the integral over w ~ N(0,I) amplitudes
+        powers = vtfilter.transfer_function_power_dB(f, x, y, ws)
+        logls = [loglike(power) for power in powers]
+        logl = scipy.special.logsumexp(logls) - np.log(len(ws))
+        return logl
+
+    def ptform(u):
+        ux, uy = unpack(u)
+        x = pareto.sample_x_ppf(ux, K, xnullbar)
+        y = pareto.sample_jeffreys_ppf(uy, band_bounds)
+        return np.concatenate((x, y))
+    
+    # Run the sampler and cache results based on `cacheid`
+    if 'nlive' not in samplerargs:
+        samplerargs = samplerargs.copy()
+        samplerargs['nlive'] = ndim*3
+
+    @__memory__.cache
+    def run_nested(cacheid, samplerargs, runargs):
+        seed = cacheid
+        rng = np.random.default_rng(seed)
+        ws = vtfilter.randws(nloglsamples, rng=rng)
+        sampler = dynesty.NestedSampler(
+            loglike_montecarlo, ptform, ndim=ndim,
+            rstate=rng, logl_args=[ws], **samplerargs
+        )
+        sampler.run_nested(**runargs)
+        return sampler.results, ws
+    
+    results, ws = run_nested(cacheid, samplerargs, runargs)
+    return (results, locals()) if return_full else results
+
 def yield_fitted_TFB_samples(
-    fit_func,
+    vtfilter,
     seed,
     Ks,
-    fit_func_kwargs={},
+    fit_kwargs={},
     parallel=(1,0)
 ):
     TFB_samples = get_TFB_samples()
@@ -180,7 +298,7 @@ def yield_fitted_TFB_samples(
             if (n % parallel[0]) != parallel[1]:
                 continue
             
-            results = fit_func(sample, K, cacheid, **fit_func_kwargs)
+            results = fit_TFB_sample(sample, vtfilter(K), cacheid, **fit_kwargs)
 
             yield dict(
                 K=K,
