@@ -2,7 +2,8 @@
 
 # TODO:
 
-https://github.com/garrettj403/SciencePlots
+- Precondition the linear solve for the source amplitudes with nearby points -- effectively re-using Cholesky(Z) -- this requires an approximate (sparse) method
+- https://github.com/garrettj403/SciencePlots (installation fails on a mysterious error)
 
 # Activating the environment
 
