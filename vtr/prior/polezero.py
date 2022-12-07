@@ -13,8 +13,8 @@ def _transform_by_precision_matrix(w, precision_matrix):
     Implementation: http://www.statsathome.com/2018/10/19/sampling-from-multivariate-normal-precision-and-covariance-parameterizations
     """
     try:
-        L = np.linalg.cholesky(precision_matrix)
-        z = scipy.linalg.solve_triangular(L, w, lower=True)
+        U = scipy.linalg.cholesky(precision_matrix) # Upper triangular
+        z = scipy.linalg.solve_triangular(U, w) # Backward substition
         return z
     except np.linalg.LinAlgError:
         return _nan_like(w)
@@ -141,10 +141,11 @@ class PoleZeroFilter:
         tilt = -10.*np.log10(4) # = -6 dB/octave
         return tilt
 
-def get_fitted_TFB_samples(n_jobs=1):
+def get_fitted_TFB_samples(n_jobs=1, **kwargs):
     return bandwidth.get_fitted_TFB_samples(
         n_jobs,
         vtfilter=PoleZeroFilter,
         seed=842329,
-        Ks=PoleZeroFilter.K_RANGE
+        Ks=PoleZeroFilter.K_RANGE,
+        **kwargs
     )

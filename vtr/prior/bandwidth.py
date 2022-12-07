@@ -2,7 +2,6 @@
 from init import __memory__
 from vtr import spectrum
 from vtr.prior import formant
-from vtr.prior import allpole
 from lib import constants
 from dgf import bijectors
 from vtr.prior import pareto
@@ -148,7 +147,7 @@ def TFB_prior(cacheid=3325495):
 ##########################################
 SAMPLERARGS = {'sample': 'rslice', 'bootstrap': 10}
 RUNARGS = {'save_bounds': False, 'maxcall': int(1e7)}
-NUM_LOGL_SAMPLES = 1
+NUM_LOGL_SAMPLES = 1 #yolo
 
 @__memory__.cache
 def get_TFB_samples(
@@ -283,8 +282,8 @@ def yield_fitted_TFB_samples(
     vtfilter,
     seed,
     Ks,
-    fit_kwargs={},
-    parallel=(1,0)
+    parallel=(1,0),
+    **fit_kwargs
 ):
     TFB_samples = get_TFB_samples()
     rng = np.random.default_rng(seed)
