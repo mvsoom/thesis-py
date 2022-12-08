@@ -166,6 +166,25 @@ def fit_nonlinear_coloring_bijector(
     
     return (nlc, results) if return_fit_results else nlc
 
+def matrix_to_vec_bijector(m, n):
+    """Implement the vec(A) operator where A is shaped (m, n) as described at https://en.wikipedia.org/wiki/Vectorization_(mathematics)"""
+    return tfb.Invert(vec_to_matrix_bijector(m, n))
+
+def vec_to_matrix_bijector(m, n):
+    """Inverse of vec(A) operator -- see `matrix_to_vec_bijector()`"""
+    # Transform vector into row-stacked matrix
+    reshape = tfb.Reshape(
+        event_shape_out=(n,m),  # A matrix
+        event_shape_in=(n*m,)   # A vector
+    )
+
+    # Transform row-stacked matrix into column-stacked
+    matrix_transpose = tfb.Transpose(rightmost_transposed_ndims=2)
+    
+    return tfb.Chain([
+        matrix_transpose, reshape
+    ])
+
 #@partial(jax.jit, static_argnames=("m", "envelope_kernel_name"))
 def nonlinear_coloring_trajectory_bijector(
     nonlinear_coloring_bijector,
@@ -224,16 +243,8 @@ def nonlinear_coloring_trajectory_bijector(
     # which is a matrix that lives in `R^(envelope_points,n)`
     color = color_bijector_tril(kron_mean, kron_tril)
     
-    reshape = tfb.Reshape(
-        event_shape_out=(n,m),  # A matrix
-        event_shape_in=(n*m,)   # A vector ~ N(0,I)
-    )
-
-    # Transpose such that `softclipexp` can broadcast correctly
-    matrix_transpose = tfb.Transpose(rightmost_transposed_ndims=2)
-    
     return tfb.Chain([
-        softclipexp, matrix_transpose, reshape, color
+        softclipexp, vec_to_matrix_bijector(m, n), color
     ])
 
 def list_to_batches(samples):
@@ -390,7 +401,7 @@ def estimate_observation_noise_cov(
     
     Estimate the `(n, n)` covariance matrix given a list of `(m, n)` samples.
     Optionally return the `(n,)` mean of the errors. The errors are defined
-    as true MINUS estimate, as
+    as estimate MINUS truth, i.e.
     
         (observed estimate) = (true) + (error)
         
@@ -398,7 +409,7 @@ def estimate_observation_noise_cov(
     true_stacked = jnp.vstack(true_samples)
     observed_stacked = jnp.vstack(observed_samples)
     
-    softclipexp, matrix_transpose, reshape, color = nonlinear_coloring_trajectory_bijector.bijectors
+    softclipexp, vec_to_matrix, color = nonlinear_coloring_trajectory_bijector.bijectors
     
     error = softclipexp.inverse(observed_stacked) - softclipexp.inverse(true_stacked)
 
@@ -409,6 +420,18 @@ def estimate_observation_noise_cov(
         return observation_noise_mean, observation_noise_cov
     else:
         return observation_noise_cov
+
+def _firstnonzero(a):
+    return a[(a > 0)][0]
+
+def _maskshape(a):
+    nrow = _firstnonzero(jnp.sum(a, axis=0))
+    ncol = _firstnonzero(jnp.sum(a, axis=1))
+    return (nrow, ncol)
+
+def _matrix_mask(a, mask):
+    flat = a[mask]
+    return flat.reshape(_maskshape(mask))
 
 def condition_nonlinear_coloring_trajectory_bijector(
     nonlinear_coloring_trajectory_bijector,
@@ -421,62 +444,99 @@ def condition_nonlinear_coloring_trajectory_bijector(
     `observation` (shaped as `(m, n)`) with the observation noise
     covariance matrix (shaped as `(n, n)`). Here `n` is the number
     of variables (also known as "tasks" in the multi-output GP literature)
-    and `m` is the trajectory length. This function computes the
-    conditional MVN in [Maddox+ 2021, Eq. 4] in the naieve way `O(m^3 n^3)`,
-    and then returns a new bijector that sends N(0,I) to the conditional
-    MVN. [Maddox+ 2021] show how to sample in `O(m^3 + n^3)` time.
+    and `m` is the trajectory length. This function returns a new bijector
+    that sends N(0,I) to the new GP conditional on the (possibly incomplete)
+    `observation`s.
     
-    Get `observation_noise_cov` (and perhaps `observation_noise_mean`)
+    Missing observations in `observation` can be input as NaNs, such
+    that the training set (i.e., the observed time and task indices) is always a
+    subset of the test set (i.e., the complete set of time indices and tasks).
+    It is best to supply the full `observation_noise_cov` matrix without
+    missing values, even though they will be masked out -- this is because
+    the said mask can be complicated.
+    
+    In general, unless all tasks are observed at all times (the so-called
+    block design case or "Kronecker GP"), there is no special structure that
+    can be exploited; this is called the "Hadamard case". The basic formulas
+    given in Rasmussen & Williams (2006) still apply in this case, and we
+    simply use them here. This costs at most `O(m^3 n^3)`, but this cost
+    is amortized because the conditional mean and covariances are precalculated
+    before inference time. In the block design case, (Maddox+ 2021) and
+    (Rakitsch+ 2013) give more efficient formulas; specifically [Maddox+ 2021]
+    shows how to sample in `O(m^3 + n^3)` time.
+    
+    Note: get `observation_noise_cov` (and perhaps `observation_noise_mean`)
     from `estimate_observation_noise_cov()`, because these need to
     be calculated in the colored domain.
     """
-    # Pick apart the bijector of the nonlinear coloring prior
-    softclipexp, matrix_transpose, reshape, color = nonlinear_coloring_trajectory_bijector.bijectors
+    m, n = observation.shape
+    del n
     
-    bijector_inverse = tfb.Chain([
-        softclipexp, matrix_transpose, reshape
-    ]).inverse
-    
-    # Get the underlying Kronecker kernel
-    shift, scale = color.bijectors
+    assert not jnp.all(jnp.isnan(observation)), "Need at least one observation"
 
-    kron_mean = shift.parameters['shift']
+    # Pick apart the bijector of the nonlinear coloring prior
+    softclipexp, vec_to_matrix, color = nonlinear_coloring_trajectory_bijector.bijectors
+    
+    # Define the vec() and matrix() operators for this multitask GP
+    vec = tfb.Invert(vec_to_matrix).forward
+    matrix = vec_to_matrix.forward
+    
+    # We assume that the test points (X*) are complete and the observation
+    # points (X) are a subset of the test points X*. This means we can get
+    # the K(X*, X ) and K(X*, X ) from masking the full test matrix K(X*, X*).
+    # Because K(X*, X*) is complete, it can be calculated by a Kronecker
+    # product, as is done in `nonlinear_coloring_trajectory_bijector()`.
+    # Note: we use `t` to denote test and `x` to denote training inputs.
+    shift, scale = color.bijectors
     kron_tril = scale.parameters['scale_tril']
-    kron_K = kron_tril @ kron_tril.T
+
+    mean_t = shift.parameters['shift']
+    K_tt = kron_tril @ kron_tril.T     # == K(X*, X*)
     
-    # Shape up the observation noise covariance into the kron domain
-    m = observation.shape[0]
-    kron_C = jnp.kron(observation_noise_cov, jnp.eye(m))
+    # Get the masks of observed indices
+    test = vec(jnp.ones_like(observation).astype(bool))
+    train = vec(~jnp.isnan(observation))
     
-    # If the noise is not N(0,Sigma) distributed, add the noise mean to
-    # the GP prior GP(kron_mean, kron_K) -- then the problem is again
-    # with zero-mean noise.
+#   tt_mask = jnp.outer(test, test)
+    tx_mask = jnp.outer(test, train)
+    xx_mask = jnp.outer(train, train)
+    
+    # Derive the other kernel matrices from K_tt
+#   K_tt = _matrix_mask(K_tt, tt_mask) # == K(X*, X*)
+    K_tx = _matrix_mask(K_tt, tx_mask) # == K(X*, X )
+    K_xx = _matrix_mask(K_tt, xx_mask) # == K(X , X )
+    K_xt = K_tx.T                      # == K(X,  X*)
+    
+    # Construct the full observation noise kernel matrix: Rakitsch+ (2013), Eq. 3
+    C_tt = jnp.kron(observation_noise_cov, jnp.eye(m)) # == C(X*, X*)
+    C_xx = _matrix_mask(C_tt, xx_mask)
+    
+    # If the noise does not have zero mean, add the nonzero noise mean to the
+    # GP prior GP(mean_t, K_tt) to recover the standard zero-mean noise setting
     if observation_noise_mean is not None:
-        kron_mean = kron_mean + jnp.kron(observation_noise_mean, jnp.ones(m))
+        observation_noise_mean_t = jnp.kron(observation_noise_mean, jnp.ones(m))
+        mean_t = mean_t + observation_noise_mean_t
     
-    # Invert the noise-enhanced kernel
-    K = stabilize(kron_K + kron_C)
-    L, lower = jax.scipy.linalg.cho_factor(K, lower=True)
-    def solve_K(B):
-        """Return `X = K^(-1) B` that solves `K X = B`"""
-        X = jax.scipy.linalg.cho_solve((L, lower), B)
-        return X
+    mean_x = mean_t[train]
     
-    # Calculate the conditional mean
-    # (Source: [Maddox+ 2021, Eq. 4] with "x_test := X" -- with
-    # prior mean `kron_mean`: see Eq. (2.38) from Rasmussen (2006))
-    obs_z = bijector_inverse(observation)
-    kron_conditional_mean = kron_mean + kron_K @ solve_K(obs_z - kron_mean)
+    # Use Cholesky to solve the linear systems involved in the conditional GP
+    KC_xx = stabilize(K_xx + C_xx)
+    KCL_xx, lower = jax.scipy.linalg.cho_factor(KC_xx, lower=True)
+    def solve_N_xx(B):
+        """Return `Y = KC_xx^(-1) B` that solves `KC_xx Y = B`"""
+        Y = jax.scipy.linalg.cho_solve((KCL_xx, lower), B)
+        return Y
     
-    # Calculate the conditional covariance
-    # (Source: [Maddox+ 2021, Eq. 4] with "x_test := X" -- this
-    # calculation does not depend on prior mean `kron_mean`)
-    I = jnp.eye(kron_K.shape[0])
-    kron_conditional_cov = kron_K @ (I - solve_K(kron_K))
+    # Calculate the conditional mean: Eq. (2.38) from Rasmussen (2006)
+    y_x = vec(softclipexp.inverse(observation))[train]
+    f_t = mean_t + K_tx @ solve_N_xx(y_x - mean_x)
+    
+    # Calculate the conditional covariance: Eq. (2.24) from Rasmussen (2006)
+    # Note: calculation does not depend on prior mean `mean_{x,t}`
+    cov_tt = K_tt - K_tx @ solve_N_xx(K_xt)
     
     # Assemble the bijector
-    color = color_bijector(kron_conditional_mean, kron_conditional_cov)
-    
+    conditioned_color = color_bijector(f_t, cov_tt)
     return tfb.Chain([
-        softclipexp, matrix_transpose, reshape, color
+        softclipexp, vec_to_matrix, conditioned_color
     ])
