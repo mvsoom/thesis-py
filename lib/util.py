@@ -1,4 +1,5 @@
 import numpy as np
+import scipy.linalg
 import dynesty
 from dynesty import plotting
 import matplotlib.pyplot as plt
@@ -57,25 +58,21 @@ def correlationmatrix(cov):
     corr = np.diag(1/sigma) @ cov @ np.diag(1/sigma)
     return corr
 
-# https://stackoverflow.com/a/55688087/6783015
-# I checked this and it is correct
-def kl_mvn(m0, S0, m1, S1):
-    """
-    Kullback-Liebler divergence from Gaussian 1 to Gaussian 0
+def kl_mvn(to, fr):
+    """Calculate `KL(to||fr)`, where `to` and `fr` are pairs of means and covariance matrices"""
+    m_to, S_to = to
+    m_fr, S_fr = fr
+    
+    d = m_fr - m_to
+    
+    c, lower = scipy.linalg.cho_factor(S_fr)
+    def solve(B):
+        return scipy.linalg.cho_solve((c, lower), B)
+    
+    def logdet(S):
+        return np.linalg.slogdet(S)[1]
 
-    From wikipedia
-    KL( (m0, S0) || (m1, S1))
-         = .5 * ( tr(S1^{-1} S0) + log |S1|/|S0| + 
-                  (m1 - m0)^T S1^{-1} (m1 - m0) - N )
-    """
-    # store inv diag covariance of S1 and diff between means
-    N = m0.shape[0]
-    iS1 = np.linalg.inv(S1)
-    diff = m1 - m0
-
-    # kl is made of three terms
-    tr_term   = np.trace(iS1 @ S0)
-    det_term  = np.log(np.linalg.det(S1)/np.linalg.det(S0)) #np.sum(np.log(S1)) - np.sum(np.log(S0))
-    quad_term = diff.T @ np.linalg.inv(S1) @ diff #np.sum( (diff*diff) * iS1, axis=1)
-    #print(tr_term,det_term,quad_term)
-    return .5 * (tr_term + det_term + quad_term - N) 
+    term1 = np.trace(solve(S_to))
+    term2 = logdet(S_fr) - logdet(S_to)
+    term3 = d.T @ solve(d)
+    return (term1 + term2 + term3 - len(d))/2.
