@@ -73,9 +73,9 @@ class PoleZeroFilter:
         S = self.overlap_matrix(x, y) # sec
         return self._amplitude_precision_matrix_from_overlap(S)
     
-    def real_to_complex_amplitudes(self, alpha):
+    def real_to_complex_amplitudes(self, g):
         """Calculate the complex pole coefficients corresponding to the real `a` (cos) and `b` (sin) amplitudes"""
-        a, b = np.split(alpha, 2)
+        a, b = np.split(g, 2)
         c = (a - (1j)*b)/2
         return c
     
@@ -83,8 +83,8 @@ class PoleZeroFilter:
         """Calculate the a (cos) and b (sin) amplitudes corresponding with the pole coefficients c. This is the inverse of real_to_complex_amplitudes()"""
         a = np.real(c + np.conj(c))
         b = np.real((1j)*(c - np.conj(c)))
-        alpha = np.concatenate((a, b))
-        return alpha
+        g = np.concatenate((a, b))
+        return g
     
     def randw(self, rng=np.random.default_rng()):
         return rng.normal(size=2*self.K)
@@ -118,9 +118,9 @@ class PoleZeroFilter:
     def impulse_response_energy(self, x, y, w):
         """Return the analytical impulse response energy in msec"""
         c = self.pole_coefficients(x, y, w)
-        alpha = self.complex_to_real_amplitudes(c)
+        g = self.complex_to_real_amplitudes(c)
         S = self.overlap_matrix(x, y)
-        energy = (alpha.T @ S @ alpha)*1000. # msec
+        energy = (g.T @ S @ g)*1000. # msec
         return energy
     
     def transfer_function_power_dB(self, f, x, y, w):

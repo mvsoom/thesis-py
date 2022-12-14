@@ -47,10 +47,11 @@ class AllPoleFilter(polezero.PoleZeroFilter):
         tilt = -20.*self.K*np.log10(4) # = (12*K) dB/octave
         return tilt
 
-def get_fitted_TFB_samples(n_jobs=1):
+def get_fitted_TFB_samples(n_jobs=1, **kwargs):
     return bandwidth.get_fitted_TFB_samples(
         n_jobs,
         vtfilter=AllPoleFilter,
         seed=6667890,
-        Ks=AllPoleFilter.K_RANGE
+        Ks=AllPoleFilter.K_RANGE,
+        **kwargs
     )
