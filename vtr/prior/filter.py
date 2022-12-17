@@ -217,3 +217,7 @@ def filter_marginal_prior(
         name="FilterMarginalPrior"
     )
     return prior # prior.sample(ns) shaped (ns, 2K)
+
+#@__memory__.cache
+def get_KL_weights():
+    pass
