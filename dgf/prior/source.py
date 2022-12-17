@@ -207,3 +207,21 @@ def _remove_cacheid(d):
     
 def _match_config(a, b):
     return _remove_cacheid(a) == _remove_cacheid(b)
+
+def trajectify_bijector(bstatic, num_pitch_periods):
+    """Turn a static bijector `bstatic` into a trajectory bijector with `num_pitch_periods` using the fitted source GP based on ground truth period trajectories in the APLAWD database""" 
+    kernel_name, _, results =\
+        period.fit_period_trajectory_kernel()
+
+    envelope_lengthscale, envelope_noise_sigma =\
+        period.maximum_likelihood_envelope_params(results)
+
+    btraj = bijectors.nonlinear_coloring_trajectory_bijector(
+        bstatic,
+        num_pitch_periods,
+        kernel_name,
+        envelope_lengthscale,
+        envelope_noise_sigma
+    )
+
+    return btraj

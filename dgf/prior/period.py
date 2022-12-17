@@ -202,28 +202,18 @@ def fit_period_trajectory_bijector(
     return bijector
 
 @__cache__
-def fit_praat_estimation_cov():
+def fit_praat_estimation_mean_and_cov():
     subset = get_aplawd_training_pairs_subset()
     true_samples  = [d[0][:,None] for d in subset]
     praat_samples = [d[1][:,None] for d in subset]
     
     b = fit_period_trajectory_bijector(1)
-    cov = bijectors.estimate_observation_noise_cov(b, true_samples, praat_samples)
-    return cov
-
-@__cache__
-def fit_praat_estimation_mean():
-    subset = get_aplawd_training_pairs_subset()
-    true_samples  = [d[0][:,None] for d in subset]
-    praat_samples = [d[1][:,None] for d in subset]
-    
-    b = fit_period_trajectory_bijector(1)
-    mean = bijectors.estimate_observation_noise_mean(b, true_samples, praat_samples)
-    return mean
+    mean, cov = bijectors.estimate_observation_noise_cov(b, true_samples, praat_samples, return_mean=True)
+    return mean, cov
 
 def fit_praat_estimation_sigma():
     """Maximum likelihood fit of Praat's observation error's sigma"""
-    return jnp.sqrt(fit_praat_estimation_cov()).squeeze()
+    return jnp.sqrt(fit_praat_estimation_mean_and_cov()[1]).squeeze()
 
 def maximum_likelihood_envelope_params(results):
     s, envelope_lengthscale, envelope_noise_sigma = results.samples[-1]
@@ -246,8 +236,9 @@ def period_trajectory_prior(
         name = 'PeriodTrajectoryPrior'
     else:
         name = 'ConditionedPeriodTrajectoryPrior'
+        mean, cov = fit_praat_estimation_mean_and_cov()
         bijector = bijectors.condition_nonlinear_coloring_trajectory_bijector(
-            bijector, praat_estimate[:,None], fit_praat_estimation_cov()
+            bijector, praat_estimate[:,None], cov, mean
         )
     
     standardnormals = tfd.MultivariateNormalDiag(scale_diag=jnp.ones(num_pitch_periods))
@@ -263,7 +254,7 @@ def period_trajectory_prior(
         bijector=squeeze_bijector,
         name=name
     )
-    return prior # prior.sample(ns) shaped (ns, num_pitch_periods) shaped
+    return prior # prior.sample(ns) shaped (ns, num_pitch_periods)
 
 def period_marginal_prior():
     squeeze_bijector = tfb.Reshape(event_shape_out=(), event_shape_in=(1,))

@@ -269,10 +269,10 @@ def formants_trajectory_prior(
     praat_estimate=None
 ):
     """
-    A GP prior based on the APLAWD database for pitch period trajectories
-    of length `num_pitch_periods`, possibly conditioned on `praat_estimate`,
-    which must be an array shaped `(num_pitch_periods,)`. The prior returns
-    samples shaped `(num_pitch_periods, 3)`.
+    A GP prior based on the VTRFormants database for reference formant frequency
+    trajectories of length `num_pitch_periods`, possibly conditioned on
+    `praat_estimate`, which must be an array shaped `(num_pitch_periods,3)`.
+    The prior returns samples shaped `(num_pitch_periods, 3)`.
     """
     bijector = fit_formants_trajectory_bijector(num_pitch_periods)
     

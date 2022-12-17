@@ -13,6 +13,7 @@ import scipy.stats
 import dynesty
 import itertools
 from functools import partial
+import warnings
 
 SAMPLERARGS = {}
 RUNARGS = {'save_bounds': False}
@@ -184,6 +185,11 @@ def vec_to_matrix_bijector(m, n):
     return tfb.Chain([
         matrix_transpose, reshape
     ])
+
+def vec_to_matrix_dims(vec_to_matrix):
+    transpose, reshape = vec_to_matrix.bijectors
+    n, m = reshape._event_shape_out
+    return (m, n)
 
 #@partial(jax.jit, static_argnames=("m", "envelope_kernel_name"))
 def nonlinear_coloring_trajectory_bijector(
@@ -472,7 +478,9 @@ def condition_nonlinear_coloring_trajectory_bijector(
     m, n = observation.shape
     del n
     
-    assert not jnp.all(jnp.isnan(observation)), "Need at least one observation"
+    if jnp.all(jnp.isnan(observation)):
+        warnings.warn("No observations to condition bijector on; returning original bijector")
+        return nonlinear_coloring_trajectory_bijector
 
     # Pick apart the bijector of the nonlinear coloring prior
     softclipexp, vec_to_matrix, color = nonlinear_coloring_trajectory_bijector.bijectors
@@ -539,4 +547,75 @@ def condition_nonlinear_coloring_trajectory_bijector(
     conditioned_color = color_bijector(f_t, cov_tt)
     return tfb.Chain([
         softclipexp, vec_to_matrix, conditioned_color
+    ])
+
+def _keepmask(m, n, dropdims):
+    dummy = np.ones((m, n))
+    dummy[:,dropdims] = np.nan
+    return ~np.isnan(dummy)
+    
+def drop_dimensions(
+    nonlinear_coloring_trajectory_bijector,
+    dropdims=[]
+):
+    """
+    Drop the dimensions `dropdims` from the `(m,n)` trajectory bijector.
+    Each dimension in `dropdims` must be in `range(n)`. This corresponds
+    to marginalizing out the underlying MVN, i.e., dropping the rows and
+    columns appropriately in the covariance matrix.
+    """
+    softclipexp, vec_to_matrix, color = nonlinear_coloring_trajectory_bijector.bijectors
+    
+    # Get original dimensions
+    m, n = vec_to_matrix_dims(vec_to_matrix)
+    
+    # Calculate dimensions to keep
+    keepdims = [idx for idx in range(n) if idx not in dropdims]
+    new_n = len(keepdims)
+    if new_n == n:
+        warnings.warn(f"Keeping all {n} dimensions")
+    
+    # Define the vec() operator for this multitask GP
+    vec = tfb.Invert(vec_to_matrix).forward
+    
+    # Get a mask to select dimensions to keep
+    keep = vec(_keepmask(m, n, dropdims)) # 1D
+    keep_matrix = jnp.outer(keep, keep)   # 2D
+    
+    #############################
+    # Adjust the color bijector #
+    #############################
+    shift, scale = color.bijectors
+    new_shift = shift.parameters['shift'][keep]
+    
+    tril = scale.parameters['scale_tril']
+    cov = tril @ tril.T
+    new_scale = _matrix_mask(cov, keep_matrix)
+    
+    new_color = color_bijector(new_shift, new_scale)
+    
+    #####################################
+    # Adjust the vec_to_matrix bijector #
+    #####################################
+    new_vec_to_matrix = vec_to_matrix_bijector(m, jnp.int32(new_n))
+    
+    ###################################
+    # Adjust the softclipexp bijector #
+    ###################################
+    exp, softclip = softclipexp.bijectors
+    del exp
+    
+    p = softclip.parameters
+    
+    bounds = jnp.column_stack((p['low'], p['high']))
+    new_bounds = bounds[keepdims,:]
+    new_sigma = p['hinge_softness'][keepdims]
+    
+    new_softclipexp = softclipexp_bijector(
+        new_bounds, new_sigma
+    )
+    
+    # Done. Reassemble the Frankenstein and get it out of here
+    return tfb.Chain([
+        new_softclipexp, new_vec_to_matrix, new_color
     ])
