@@ -13,6 +13,9 @@ TIMIT_FS_HZ = 16000
 def spectrum_frequencies(fs=FS_HZ):
     return np.arange(0, fs/2, DF)
 
+# Number of pitch periods to posit before the first pulse
+PREPEND_PITCH_PERIODS = 1
+
 # The boundary factor `c` (Riutort-Mayol 2020)
 BOUNDARY_FACTOR = 2.
 

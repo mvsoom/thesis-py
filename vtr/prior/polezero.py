@@ -86,11 +86,17 @@ class PoleZeroFilter:
         g = np.concatenate((a, b))
         return g
     
+    def ndim(self):
+        return 2*self.K
+    
+    def ndim_g(self):
+        return self.ndim()
+    
     def randw(self, rng=np.random.default_rng()):
-        return rng.normal(size=2*self.K)
+        return rng.normal(size=self.ndim_g())
     
     def randws(self, size, rng=np.random.default_rng()):
-        return rng.normal(size=(size, 2*self.K))
+        return rng.normal(size=(size, self.ndim_g()))
     
     def poles(self, x, y):
         return -np.pi*y + 2*np.pi*(1j)*x

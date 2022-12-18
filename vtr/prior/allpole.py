@@ -9,11 +9,8 @@ class AllPoleFilter(polezero.PoleZeroFilter):
     def __init__(self, K):
         super().__init__(K)
     
-    def randw(self, rng=np.random.default_rng()):
-        return np.atleast_1d(rng.normal())
-    
-    def randws(self, size, rng=np.random.default_rng()):
-        return rng.normal(size=(size, 1))
+    def ndim_g(self):
+        return 1
 
     def excluded_pole_product(self, p):
         ps = np.concatenate([p, np.conj(p)])
