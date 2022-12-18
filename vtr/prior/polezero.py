@@ -1,13 +1,14 @@
 from vtr.prior import bandwidth
 from lib import constants
 
+import numpy
 import numpy as np
-import scipy.special
+import scipy
 
 def _nan_like(a):
     return np.nan*a
 
-def _transform_by_precision_matrix(w, precision_matrix):
+def _transform_by_precision_matrix(w, precision_matrix, scipy):
     """Transform w ~ N(0, 1) to z ~ N(0, precision_matrix)
     
     Implementation: http://www.statsathome.com/2018/10/19/sampling-from-multivariate-normal-precision-and-covariance-parameterizations
@@ -22,9 +23,11 @@ def _transform_by_precision_matrix(w, precision_matrix):
 class PoleZeroFilter:
     K_RANGE = (3, 4, 5, 6, 7, 8, 9, 10)
 
-    def __init__(self, K):
+    def __init__(self, K, numpy_backend=numpy, scipy_backend=scipy):
         self.K = K
         self.impulse_response_energy_msec = constants.IMPULSE_RESPONSE_ENERGY_MSEC
+        self.np = numpy_backend
+        self.scipy = scipy_backend
 
     def _cos_overlap_matrix(self, x, y):
         x1, x2 = x[:,None], x[None,:]
@@ -51,14 +54,14 @@ class PoleZeroFilter:
         return num/den
 
     def overlap_matrix(self, x, y):
-        X = 2*np.pi*x
-        Y = np.pi*y
+        X = 2*self.np.pi*x
+        Y = self.np.pi*y
 
         c = self._cos_overlap_matrix(X, Y)
         s = self._sin_overlap_matrix(X, Y)
         cs = self._cos_sin_overlap_matrix(X, Y)
 
-        S = np.block([
+        S = self.np.block([
             [c,    cs],
             [cs.T, s ]
         ])
@@ -75,15 +78,15 @@ class PoleZeroFilter:
     
     def real_to_complex_amplitudes(self, g):
         """Calculate the complex pole coefficients corresponding to the real `a` (cos) and `b` (sin) amplitudes"""
-        a, b = np.split(g, 2)
+        a, b = self.np.split(g, 2)
         c = (a - (1j)*b)/2
         return c
     
     def complex_to_real_amplitudes(self, c):
         """Calculate the a (cos) and b (sin) amplitudes corresponding with the pole coefficients c. This is the inverse of real_to_complex_amplitudes()"""
-        a = np.real(c + np.conj(c))
-        b = np.real((1j)*(c - np.conj(c)))
-        g = np.concatenate((a, b))
+        a = self.np.real(c + self.np.conj(c))
+        b = self.np.real((1j)*(c - self.np.conj(c)))
+        g = self.np.concatenate((a, b))
         return g
     
     def ndim(self):
@@ -108,7 +111,7 @@ class PoleZeroFilter:
         of the x's and y's are very close together).
         """
         precision_matrix = self.amplitude_precision_matrix(x, y)
-        amplitudes = _transform_by_precision_matrix(w, precision_matrix)
+        amplitudes = _transform_by_precision_matrix(w, precision_matrix, self.scipy)
         return self.real_to_complex_amplitudes(amplitudes)
 
     def impulse_response(self, t, x, y, w):
@@ -119,7 +122,7 @@ class PoleZeroFilter:
         return h
 
     def impulse_response_cp(self, t, c, p):
-        return np.real(2.*c[None,:]*np.exp(t[:,None]*p[None,:])).sum(axis=1)
+        return self.np.real(2.*c[None,:]*self.np.exp(t[:,None]*p[None,:])).sum(axis=1)
     
     def impulse_response_energy(self, x, y, w):
         """Return the analytical impulse response energy in msec"""
@@ -137,14 +140,14 @@ class PoleZeroFilter:
         """
         P = self.poles(x, y)[:,None]
         C = self.pole_coefficients(x, y, w.T).T[...,None]
-        S = (2.*np.pi*1j)*f[None,:]
-        terms = C/(S - P) + np.conj(C)/(S - np.conj(P))
-        H = np.sum(terms, axis=-2)
-        power = 20.*np.log10(np.abs(H))
+        S = (2.*self.np.pi*1j)*f[None,:]
+        terms = C/(S - P) + self.np.conj(C)/(S - self.np.conj(P))
+        H = self.np.sum(terms, axis=-2)
+        power = 20.*self.np.log10(self.np.abs(H))
         return power
 
     def analytical_tilt(self):
-        tilt = -10.*np.log10(4) # = -6 dB/octave
+        tilt = -10.*self.np.log10(4) # = -6 dB/octave
         return tilt
 
 def get_fitted_TFB_samples(n_jobs=1, **kwargs):
