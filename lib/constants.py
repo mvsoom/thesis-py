@@ -82,7 +82,7 @@ LF_T_PARAMS = ('T0', 'Te', 'Tp', 'Ta')
 
 # Bounds for the variance of a GP given that the data is power-normalized
 MIN_VAR_SIGMA = 1e-3
-MAX_VAR_SIGMA = 10.
+MAX_VAR_SIGMA = 1e2
 
 # Bounds for the relative scale `r`
 MIN_R = 1/(np.pi*FS_KHZ*MAX_PERIOD_LENGTH_MSEC)

@@ -208,7 +208,6 @@ def filter_marginal_prior(
     F_estimate=None,
     noiseless_estimates=False
 ):
-    #return filter_trajectory_prior(1, vtfilter, T_estimate, F_estimate)
     ndim = 2*vtfilter.K
     squeeze_bijector = tfb.Reshape(event_shape_out=(ndim,), event_shape_in=(1,ndim))
     prior = tfd.TransformedDistribution(
