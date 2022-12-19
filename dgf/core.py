@@ -25,7 +25,6 @@ def phi_singlepole(t, m, T, L, p):
     b = -p*L*st
     c = m*π*ct - jnp.exp(p*(t - T))*(m*π*cT + p*L*sT)
     
-    # TODO: write as `jnp.piecewise()`?
     out = jnp.where(0. < t, a, 0.)               # t ∈ (0,∞]
     out += jnp.where((0. < t) & (t <= T), b, 0.) # t ∈ (0,T]
     out += jnp.where(T < t, c, 0.)               # t ∈ (T,∞)
@@ -101,13 +100,26 @@ def kernelmatrix_root_gfd_oq(kernel, var, r, t, M, T, Oq, c, impose_null_integra
     R = kernelmatrix_root_gfd(kernel, var, scale, t - GOI, M, T*Oq, c, impose_null_integral)
     return R # (len(t), M)
 
-@partial(jit, static_argnames=("kernel", "M", "c"))
-def kernelmatrix_root_convolved_gfd(kernel, var, scale, t, M, T, c, poles):
+@partial(jit, static_argnames=("kernel", "M", "c", "impose_null_integral"))
+def kernelmatrix_root_convolved_gfd(kernel, var, scale, t, M, T, c, poles, impose_null_integral=True):
     L = T*c
     d = sqrt_gamma_coefficients(kernel, var, scale, M, L)
     R = d[None,:] * phi_transfer_matrix(t, M, T, L, poles)
-    R = impose_null_integral_constraint(d, R, M, T, L)
+    if impose_null_integral:
+        R = impose_null_integral_constraint(d, R, M, T, L)
 #   R = impose_domain(R, t, 0., jnp.inf) # Already imposed by `phi_transfer_matrix()`
+    return R # (len(t), M)
+
+@partial(jit, static_argnames=("kernel", "M", "c", "impose_null_integral"))
+def kernelmatrix_root_convolved_gfd_oq(kernel, var, r, t, M, T, Oq, c, poles, impose_null_integral=True):
+    # Manually intervene to limit `Oq <= 1`, since this function
+    # will return perfectly sensible results if this is not the case
+    # (the waveform gets shifted to the left and the period is stretched)
+    Oq = jax.lax.cond(Oq <= 1., lambda: Oq, lambda: jnp.nan)
+    
+    GOI = T*(1 - Oq)
+    scale = r*T*Oq
+    R = kernelmatrix_root_convolved_gfd(kernel, var, scale, t - GOI, M, T*Oq, c, poles, impose_null_integral)
     return R # (len(t), M)
 
 @jit

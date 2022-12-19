@@ -2,6 +2,7 @@ from dgf import bijectors
 from dgf.prior import source
 from vtr.prior import filter
 from lib import constants
+from dgf import core
 
 import jax
 import jax.numpy as jnp
@@ -110,5 +111,18 @@ def theta_trajectory_prior(hyper):
     )
     return prior
 
-def model_basis_functions(theta, hyper):
+def pole_coefficients(theta, hyper):
+    x, y = theta['filter'].split(2)
+    g = theta['g']
+    poles = hyper['filter'].poles(x, y)/1000 # Convert to kHz
+    pole_coeffs = hyper['filter'].pole_coefficients(x, y, g)
+    return poles, pole_coeffs
+
+def root_matrix(theta, hyper):
     pass
+
+def model_basis_functions(theta, hyper):
+    noise_sigma = theta['noise_sigma'].squeeze()
+    poles, pole_coeffs = pole_coefficients(theta, hyper)
+    #var_sigma, r, T, Oq = unpack_source(theta['source'], hyper)
+    return c
