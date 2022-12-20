@@ -4,19 +4,20 @@ import jax.numpy as jnp
 
 from tensorflow_probability.substrates.jax.math import cholesky_update as jax_cholesky_update
 from jax import jit, value_and_grad, grad
-from functools import partial
 
-@partial(jit, inline=True)
 def phi(t, m, L):
     return jnp.sqrt(2/L)*jnp.sin(jnp.pi*m*t/L)
 
-@partial(jit, inline=True)
 def phi_integrated(t, m, L):
     return jnp.sqrt(2*L)*(1. - jnp.cos(jnp.pi*m*t/L))/(m*jnp.pi)
 
-@partial(jit, inline=True)
 def phi_singlepole(t, m, T, L, p):
-    """Convolve `phi(t, m, L)` on $[0,T]$ with a single $e^{pt}$ pole"""
+    """Convolve `phi(t, m, L)` on $[0,T]$ with a single $e^{pt}$ pole
+    
+    Note: we assume `t, T, L` in msec and `p` in Hz.
+    """
+    p = p/1000. # Convert to kHz, conjugate to time units in msec
+    
     π = jnp.pi
     st, ct = jnp.sin(π*m*t/L), jnp.cos(π*m*t/L)
     sT, cT = jnp.sin(π*m*T/L), jnp.cos(π*m*T/L)
@@ -32,64 +33,59 @@ def phi_singlepole(t, m, T, L, p):
     scale = jnp.sqrt(2*L)/((π*m)**2 + (p*L)**2)
     return out*scale
 
-@partial(jit, static_argnames="M", inline=True)
 def phi_matrix(t, M, L):
     """Hilbert basis functions"""
     m = jnp.arange(1, M+1)
     return phi(t[:,None], m[None,:], L) # (len(t), M)
 
-@partial(jit, static_argnames="M")
 def phi_integrated_matrix(t, M, L):
     """Integrated Hilbert basis functions"""
     m = jnp.arange(1, M+1)
     return phi_integrated(t[:,None], m[None,:], L) # (len(t), M)
 
-@partial(jit, static_argnames="M")
 def phi_integrated_matrix_at(T, M, L):
     m = jnp.arange(1, M+1)
     return phi_integrated(T, m, L) # (M,)
 
-@partial(jit, static_argnames="M")
 def phi_poles_matrix(t, M, T, L, poles):
     """Hilbert basis functions convolved with a set of poles"""
     m = jnp.arange(1, M+1)
     phi = phi_singlepole(t[:,None,None], m[None,:,None], T, L, poles[None,None,:])
     return phi # (len(t), M, len(poles))
 
-@partial(jit, static_argnames="M")
-def phi_transfer_matrix(t, M, T, L, poles):
-    """Hilbert basis functions convolved with an all-pole transfer function"""
-    c = pole_coefficients(poles)
+def phi_transfer_matrix(t, M, T, L, poles, c):
+    """Hilbert basis functions convolved with a rational transfer function"""
     phi = phi_poles_matrix(t, M, T, L, poles)
     phi = jnp.real(phi @ (2*c))
     return phi # (len(t), M)
 
-@partial(jit, static_argnames=("kernel", "M"))
 def sqrt_gamma_coefficients(kernel, var, scale, M, L):
     """Calculate $\sqrt{S(-\lambda_m)}$ which has units [rad/msec] if $L$ has units msec"""
     m = jnp.arange(1, M+1)
     gamma = kernel(var, scale).spectral_density(m*jnp.pi/L)
     return jnp.sqrt(gamma) # (M,)
 
-@partial(jit, static_argnames=("kernel", "M"))
 def kernelmatrix_root_hilbert(kernel, var, scale, t, M, L):
     d = sqrt_gamma_coefficients(kernel, var, scale, M, L)
     R = d[None,:] * phi_matrix(t, M, L)
     R = impose_domain(R, t, 0., L)
     return R # (len(t), M)
 
-@partial(jit, static_argnames=("kernel", "M", "c", "impose_null_integral"))
-def kernelmatrix_root_gfd(kernel, var, scale, t, M, T, c, impose_null_integral=True):
-    L = c*T
+def kernelmatrix_root_gfd(
+    kernel, var, scale, t, M, T, bf, impose_null_integral=True, integrate=False
+):
+    L = bf*T
     d = sqrt_gamma_coefficients(kernel, var, scale, M, L)
-    R = d[None,:] * phi_matrix(t, M, L)
+    phi = phi_integrated_matrix(t, M, L) if integrate else phi_matrix(t, M, L) 
+    R = d[None,:] * phi
     if impose_null_integral:
         R = impose_null_integral_constraint(d, R, M, T, L) # O(M²)
     R = impose_domain(R, t, 0., T)
     return R # (len(t), M)
 
-@partial(jit, static_argnames=("kernel", "M", "c", "impose_null_integral"))
-def kernelmatrix_root_gfd_oq(kernel, var, r, t, M, T, Oq, c, impose_null_integral=True):
+def kernelmatrix_root_gfd_oq(
+    kernel, var, r, t, M, T, Oq, bf, impose_null_integral=True, integrate=False
+):
     # Manually intervene to limit `Oq <= 1`, since this function
     # will return perfectly sensible results if this is not the case
     # (the waveform gets shifted to the left and the period is stretched)
@@ -97,70 +93,52 @@ def kernelmatrix_root_gfd_oq(kernel, var, r, t, M, T, Oq, c, impose_null_integra
 
     GOI = T*(1 - Oq)
     scale = r*T*Oq
-    R = kernelmatrix_root_gfd(kernel, var, scale, t - GOI, M, T*Oq, c, impose_null_integral)
+    R = kernelmatrix_root_gfd(kernel, var, scale, t - GOI, M, T*Oq, bf, impose_null_integral, integrate)
     return R # (len(t), M)
 
-@partial(jit, static_argnames=("kernel", "M", "c", "impose_null_integral"))
-def kernelmatrix_root_convolved_gfd(kernel, var, scale, t, M, T, c, poles, impose_null_integral=True):
-    L = T*c
+def kernelmatrix_root_convolved_gfd(
+    kernel, var, scale, t, M, T, bf, poles, c, impose_null_integral=True
+):
+    L = T*bf
     d = sqrt_gamma_coefficients(kernel, var, scale, M, L)
-    R = d[None,:] * phi_transfer_matrix(t, M, T, L, poles)
+    R = d[None,:] * phi_transfer_matrix(t, M, T, L, poles, c)
     if impose_null_integral:
         R = impose_null_integral_constraint(d, R, M, T, L)
 #   R = impose_domain(R, t, 0., jnp.inf) # Already imposed by `phi_transfer_matrix()`
     return R # (len(t), M)
 
-@partial(jit, static_argnames=("kernel", "M", "c", "impose_null_integral"))
-def kernelmatrix_root_convolved_gfd_oq(kernel, var, r, t, M, T, Oq, c, poles, impose_null_integral=True):
-    # Manually intervene to limit `Oq <= 1`, since this function
-    # will return perfectly sensible results if this is not the case
-    # (the waveform gets shifted to the left and the period is stretched)
-    Oq = jax.lax.cond(Oq <= 1., lambda: Oq, lambda: jnp.nan)
+def kernelmatrix_root_convolved_gfd_oq(
+    kernel, var, r, t, M, T, Oq, bf, poles, c, impose_null_integral=True
+):
+    # Note: we assume `Oq <= 1` here, otherwise this will trigger JAX's
+    # NaN debugger for some reason. This is OK anyway since this function
+    # is only used in conjunction with p(theta), which guarantees `Oq <= 1`
+#   Oq = jax.lax.cond(Oq <= 1., lambda: Oq, lambda: jnp.nan)
     
     GOI = T*(1 - Oq)
     scale = r*T*Oq
-    R = kernelmatrix_root_convolved_gfd(kernel, var, scale, t - GOI, M, T*Oq, c, poles, impose_null_integral)
+    R = kernelmatrix_root_convolved_gfd(
+        kernel, var, scale, t - GOI, M, T*Oq, bf, poles, c, impose_null_integral
+    )
     return R # (len(t), M)
 
-@jit
 def impose_domain(R, t, a, b):
     """Make sure basis functions in `R` are nonzero only in `[a,b]`"""
     outside_domain = (t[:,None] < a) | (b < t[:,None])
     return jnp.where(outside_domain, 0., R)
 
-@partial(jit, static_argnames=("M"))
 def impose_null_integral_constraint(d, R, M, T, L):
     assert R.shape[1] == M
     q = d * phi_integrated_matrix_at(T, M, L)
     q /= jnp.linalg.norm(q)
     return R @ cholesky_of_projection(q, M)
 
-@partial(jit, static_argnames="M")
 def cholesky_of_projection(q, M):
     assert len(q) == M
     nugget = M*jnp.finfo(float).eps
     I = jnp.diag(jnp.repeat(1. + nugget, M))
     return jax_cholesky_update(I, q, -1.) # O(M²)
 
-@partial(jit, inline=True)
-def excluded_pole_product(ps):
-    diff = ps[None,:] - ps[:,None]
-    diff = diff.at[jnp.diag_indices_from(diff)].set(1.)
-    denom = jnp.prod(diff, axis=0)
-    return 1./denom
-
-@jit
-def pole_coefficients(poles):
-    gain = jnp.prod(jnp.abs(poles)**2)
-    ps = jnp.concatenate([poles, jnp.conj(poles)])
-    return gain*excluded_pole_product(ps)[:len(poles)] # (len(poles),)
-
-@jit
-def make_poles(bandwidth, frequency):
-    poles = (-bandwidth*jnp.pi + (1j)*frequency*2*jnp.pi)/1000.
-    return poles
-
-@jit
 def loglikelihood_hilbert(R, y, noise_power):
     """Implement *positive* log likelihood from Section 3.2 in Solin & Särkkä (2020)"""
     D = jnp.eye(R.shape[1])
@@ -185,7 +163,6 @@ def loglikelihood_hilbert(R, y, noise_power):
     negative_logl = log_Q_term/2 + bilinear_term/2 + order_term/2
     return -negative_logl
 
-@partial(jit, static_argnames=("kernel", "M"))
 def loglikelihood_hilbert_grid(kernel, var, scale, M, y, noise_power):
     """Evaluate the log likelihood of a Hilbert kernel on a grid
     

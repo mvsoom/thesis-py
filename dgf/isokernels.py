@@ -5,15 +5,12 @@ from jax.nn import relu as ramp
 from jax import jit, value_and_grad, grad
 
 import sys
-from functools import partial
 
 def resolve(kernel_name):
     """Avoid recalculating cached functions which have kernel arguments"""
     this_module = sys.modules[__name__]
     return getattr(this_module, kernel_name)
 
-# Note: we cannot JIT class methods with `@partial(jit, static_argnums=0)`
-# since it will trigger recompilation each time a new instance of the class is made.
 class IsoKernel():
     def __init__(self, variance, length_scale):
         amplitude = jnp.sqrt(variance)
@@ -55,35 +52,30 @@ class CustomIsoKernel(IsoKernel, jax_psd_kernels.ExponentiatedQuadratic):
         else:
             return out
 
-@partial(jit, inline=True)
 def spectral_density_matern12(s): return 2/(1+s**2)
 
 class Matern12Kernel(IsoKernel, jax_psd_kernels.MaternOneHalf):
     def _unscaled_spectral_density(self, s):
         return spectral_density_matern12(s)
 
-@partial(jit, inline=True)
 def spectral_density_matern32(s): return 12*jnp.sqrt(3)/(3+s**2)**2
 
 class Matern32Kernel(IsoKernel, jax_psd_kernels.MaternThreeHalves):
     def _unscaled_spectral_density(self, s):
         return spectral_density_matern32(s)
 
-@partial(jit, inline=True)
 def spectral_density_matern52(s): return 400*jnp.sqrt(5)/(3*(5+s**2)**3)
 
 class Matern52Kernel(IsoKernel, jax_psd_kernels.MaternFiveHalves):
     def _unscaled_spectral_density(self, s):
         return spectral_density_matern52(s)
 
-@partial(jit, inline=True)
 def spectral_density_rbf(s): return jnp.sqrt(2*jnp.pi)*jnp.exp(-s**2/2)
 
 class SqExponentialKernel(IsoKernel, jax_psd_kernels.ExponentiatedQuadratic):
     def _unscaled_spectral_density(self, s):
         return spectral_density_rbf(s)
 
-@partial(jit, inline=True)
 def spectral_density_sinc(s): return jnp.where(s <= jnp.pi, 1., 0.)
 
 class CenteredSincKernel(CustomIsoKernel):
@@ -94,7 +86,6 @@ class CenteredSincKernel(CustomIsoKernel):
     def _kappa(self, r):
         return jnp.sinc(r)
 
-@partial(jit, inline=True)
 def spectral_density_compactpoly0(s): return jnp.sin(jnp.pi*s)**2/(jnp.pi*s)**2
 
 class CompactPoly0(CustomIsoKernel):
@@ -106,7 +97,6 @@ class CompactPoly0(CustomIsoKernel):
         j = 1.
         return ramp(1. - r)**j
 
-@partial(jit, inline=True)
 def spectral_density_compactpoly1(s):
     return (6*jnp.pi*s*(2 + jnp.cos(2*jnp.pi*s)) - 9*jnp.sin(2*jnp.pi*s))/(2*jnp.pi**5*s**5)
 
@@ -119,7 +109,6 @@ class CompactPoly1(CustomIsoKernel):
         j = 2.
         return (1 + (1 + j)*r)*ramp(1 - r)**(1 + j)
 
-@partial(jit, inline=True)
 def spectral_density_compactpoly2(s):
     return 105*(-12 + 8*jnp.pi**2*s**2 - 2*(-6 + jnp.pi**2*s**2)*jnp.cos(2*jnp.pi*s) + 
    9*jnp.pi*s*jnp.sin(2*jnp.pi*s))/(4*jnp.pi**8*s**8)
@@ -133,7 +122,6 @@ class CompactPoly2(CustomIsoKernel):
         j = 3.
         return (1/3)*(3 + (6 + 3*j)*r + (3 + 4*j + j**2)*r**2)*ramp(1 - r)**(2 + j)
 
-@partial(jit, inline=True)
 def spectral_density_compactpoly3(s):
     return (945*(64*jnp.pi*s*(-6 + jnp.pi**2*s**2) + 
    2*jnp.pi*s*(-123 + 4*jnp.pi**2*s**2)*jnp.cos(2*jnp.pi*s) + 

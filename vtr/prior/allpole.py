@@ -1,7 +1,8 @@
 from vtr.prior import bandwidth
 from vtr.prior import polezero
 
-import numpy as np
+import numpy
+import jax
 
 class AllPoleFilter(polezero.PoleZeroFilter):
     K_RANGE = (3, 4, 5, 6, 7, 8, 9, 10)
@@ -11,20 +12,15 @@ class AllPoleFilter(polezero.PoleZeroFilter):
     
     def ndim_g(self):
         return 1
-
-    def _excluded_pole_product(self, p):
-        # Only works with Numpy backend
-        ps = self.np.concatenate([p, self.np.conj(p)])
-        diff = ps[None,:] - ps[:,None]
-        diff[self.np.diag_indices_from(diff)] = 1.
-        denom = self.np.prod(diff, axis=0)
-        return (1./denom)[:len(p)]
     
     def excluded_pole_product(self, p):
-        # Uses `nanprod` to allow JAX Numpy backend
         ps = self.np.concatenate([p, self.np.conj(p)])
         diff = ps[None,:] - ps[:,None]
-        prod = self.np.nanprod(1./diff, axis=0) # Harmless divide by zero
+        if self.np is jax.numpy:
+            diff = diff.at[self.np.diag_indices_from(diff)].set(1.)
+        else:
+            diff[self.np.diag_indices_from(diff)] = 1.
+        prod = self.np.prod(1./diff, axis=0)
         return prod[:len(p)]
 
     def unscaled_pole_coefficients(self, x, y):

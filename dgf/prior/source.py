@@ -1,5 +1,5 @@
 """Fitting the parameters of the source"""
-from init import __memory__
+from init import __memory__, __cache__
 from dgf.prior import lf
 from dgf.prior import period
 from lib import constants
@@ -394,3 +394,18 @@ def source_marginal_prior(
         name="SourceMarginalPrior"
     )
     return prior # prior.sample(ns) shaped (ns, ndim)
+
+@__cache__
+def get_source_envelope_kernel():
+    envelope_kernel_name, _, results =\
+        period.fit_period_trajectory_kernel()
+
+    envelope_lengthscale, envelope_noise_sigma =\
+        period.maximum_likelihood_envelope_params(results)
+    
+    envelope_variance = 1.
+    envelope_kernel = isokernels.resolve(envelope_kernel_name)(
+        envelope_variance, envelope_lengthscale
+    )
+    
+    return envelope_kernel, envelope_noise_sigma
