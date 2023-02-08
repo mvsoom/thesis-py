@@ -1,0 +1,33 @@
+# https://github.com/nilsvu/texfig
+# https://matplotlib.org/stable/gallery/userdemo/pgf_preamble_sgskip.html
+
+##########################################################################
+# Note: %matplotlib inline will throw errors if Latex commands requiring #
+# packages loaded in the preamble are used!                              #
+# This is the case for TEX_JEFFREYS and TEX_PC.                          #
+##########################################################################
+
+import matplotlib as mpl
+mpl.use('pgf')
+from matplotlib import pyplot as plt
+plt.rcParams.update({
+    "font.family": "sans-serif",
+    "text.usetex": False,
+    "pgf.rcfonts": False,    # don't setup fonts from rc parameters
+    "pgf.preamble": "\n".join([
+        r"\usepackage{bm}",
+    ])
+})
+
+# Extra settings
+plt.rcParams.update({
+    'xtick.labelsize':'x-small',
+    'ytick.labelsize':'x-small'
+})
+
+# Common plot settings
+TEXTWIDTH = 7.26913 # For wide figures
+
+def save_plot(dir, fig, name):
+    fig.savefig(dir + '/' + name + '.pdf')
+    return fig.savefig(dir + '/' + name + '.pgf')
