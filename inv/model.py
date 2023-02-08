@@ -1,6 +1,8 @@
 from dgf import bijectors
 from dgf.prior import source
+from dgf.prior import period
 from vtr.prior import filter
+from vtr.prior import formant
 from lib import constants
 from dgf import core
 from dgf import isokernels
@@ -28,7 +30,40 @@ def ndim_g(hyper):
 def ndim(hyper):
     """The total dimension of the parameter space. Note that we don't count the source amplitudes since they are marginalized over"""
     ndim_noise = 1
-    return ndim_noise + ndim_source(hyper) + ndim_filter(hyper) + ndim_g(hyper)
+    ndim_delta = 1
+    return ndim_noise + ndim_delta + ndim_source(hyper) + ndim_filter(hyper) + ndim_g(hyper)
+
+def source_labels(hyper):
+    return constants.SOURCE_PARAMS if hyper['source']['use_oq'] else  constants.SOURCE_PARAMS[:-1]
+
+def filter_labels(hyper):
+    return [f"${c}_{{{i+1}}}$" for c in ('x', 'y') for i in range(hyper['filter'].K)]
+
+def g_labels(hyper):
+    if isinstance(hyper['filter'], filter.PZ):
+        return [f"$g_{{{i+1}}}$" for i in range(2*hyper['filter'].K)]
+    elif isinstance(hyper['filter'], filter.AP):
+        return ["$g_0$"]
+    else:
+        raise ValueError(f"Unrecognized {hyper['filter']}")
+
+def labels(hyper):
+    return None # Need to implement with NP -- need to know order for this
+    return (
+        "noise_sigma",
+        "delta",
+        *source_labels(hyper),
+        *filter_labels(hyper),
+        *g_labels(hyper)
+    )
+
+def rough_frequency_limit(hyper):
+    """See dgf/test/test_pulse.ipynb for rationale"""
+    M = hyper['source']['kernel_M']
+    T = np.nanmean(hyper['data']['T_estimate'])
+    c = constants.BOUNDARY_FACTOR
+    f = M/(2*c*T)
+    return f*1000 # Hz
 
 def randf(hyper, rng=np.random.default_rng()):
     return rng.normal(size=ndim_f(hyper))
@@ -56,26 +91,84 @@ def noise_sigma_bijector():
     squeeze = tfb.Reshape(event_shape_out=(-1,1), event_shape_in=())
     return tfb.Chain([tfb.Invert(squeeze), b, squeeze])
 
+def delta_bijector(hyper):
+    rel_mu, rel_sigma = period.fit_praat_relative_gci_error() # Fractional
+    
+    # Get a reference value for the pitch period
+    a = hyper['data']['anchor'] + hyper['data']['prepend']
+    Tref = hyper['data']['T_estimate'][a]
+    if np.isnan(Tref):
+        Tref = constants.MEAN_PERIOD_LENGTH_MSEC
+    
+    # Convert to absolute values in msec
+    mu = Tref*rel_mu
+    sigma = Tref*rel_sigma
+    
+    return tfb.Chain([
+        tfb.Shift(mu), tfb.Scale(sigma)
+    ])
+
+def filter_g_bijector(hyper):
+    """Get the trajectory bijector for the filter `g` amplitudes"""
+    # We can use `nonlinear_coloring_trajectory_bijector()` to endow
+    # a bijector with trajectory structure, but this method expects a
+    # nonlinear component. We hack into it by setting the nonlinear
+    # component to identity, since the amplitudes already live in the
+    # linear (unbounded) domain
+    ndim = hyper['filter'].ndim_g()
+    beye = bijectors.color_bijector(
+        jnp.zeros(ndim), jnp.eye(ndim)
+    )
+    bhack = tfb.Chain([
+        tfb.Identity(), beye
+    ])
+    
+    # Get the filter envelope kernel and lengthscale. The noise sigma
+    # (jitterness of trajectories) is ignored, since it is defined in
+    # the log domain. Instead, since all amplitudes have been rescaled
+    # to be N(0,1), we set the envelope kernel noise sigma to O(1).
+    envelope_kernel_name, _, results =\
+        formant.fit_formants_trajectory_kernel()
+    envelope_lengthscale, _ =\
+        formant.maximum_likelihood_envelope_params(results)
+    envelope_noise_sigma = constants.FILTER_G_ENVELOPE_NOISE_SIGMA
+    
+    # Hack the N(0,I) bijector and the trajectory kernel together
+    bg = bijectors.nonlinear_coloring_trajectory_bijector(
+        bhack,
+        hyper['data']['NP'],
+        envelope_kernel_name,
+        envelope_lengthscale,
+        envelope_noise_sigma
+    )
+    return bg
+
 def theta_trajectory_bijector(hyper):
     """Get the bijector `w ~ N(0,I) => theta ~ p(theta|hyper)`"""
     # Split the long vector w ~ N(0, I) into the different parameters...
     ndim_noise_sigma = 1
     split = tfb.Split(
-        [ndim_noise_sigma, ndim_source(hyper), ndim_filter(hyper), ndim_g(hyper)]
+        [ndim_noise_sigma, 1, ndim_source(hyper), ndim_filter(hyper), ndim_g(hyper)]
     )
     
     # ... give them names ...
     restructure = tfb.Restructure({
         'noise_sigma': 0,
-             'source': 1,
-             'filter': 2,
-                  'g': 3
+              'delta': 1,
+             'source': 2,
+             'filter': 3,
+                  'g': 4
     })
     
-    # ... and transform them using nonlinear coloring bijectors.
+    # ... and transform them using (non)linear coloring bijectors.
     squeeze = tfb.Reshape(event_shape_out=(), event_shape_in=(1,))
     bnoise_sigma = tfb.Chain([
         noise_sigma_bijector(),
+        squeeze # Undo singleton axis from `split` bijector
+    ])
+    
+    bdelta = tfb.Chain([
+        delta_bijector(hyper),
         squeeze # Undo singleton axis from `split` bijector
     ])
     
@@ -94,15 +187,11 @@ def theta_trajectory_bijector(hyper):
         hyper['meta']['noiseless_estimates']
     )
     
-    bg = tfb.Reshape(
-        event_shape_in = (ndim_g(hyper),),
-        event_shape_out = (
-            hyper['data']['NP'], hyper['filter'].ndim_g()
-        ),
-    )
+    bg = filter_g_bijector(hyper)
     
     transform = tfb.JointMap({
         'noise_sigma': bnoise_sigma,
+              'delta': bdelta,
              'source': bsource,
              'filter': bfilter,
                   'g': bg
@@ -124,13 +213,12 @@ def theta_trajectory_prior(hyper):
     )
     return prior
 
-def _without(d, key):
+def _without(d, keys):
     d2 = d.copy()
-    val = d2.pop(key)
-    return val, d2
+    return [d2.pop(key) for key in keys], d2
 
 def unpack_theta(theta, hyper):
-    noise_sigma, rest = _without(theta, 'noise_sigma')
+    (noise_sigma, delta), rest = _without(theta, ('noise_sigma', 'delta'))
     
     def unpack_rest(theta):
         if hyper['source']['use_oq']:
@@ -148,12 +236,17 @@ def unpack_theta(theta, hyper):
 
     theta_source, theta_filter = jax.vmap(unpack_rest)(rest)
     
-    return noise_sigma, theta_source, theta_filter
+    return noise_sigma, delta, theta_source, theta_filter
 
-def get_offset(theta_source, hyper):
-    offset = jnp.cumsum(theta_source['T'])
-    offset -= offset[hyper['data']['anchor'] + hyper['data']['prepend']]
-    offset += hyper['data']['anchort']
+def get_offset(delta, theta_source, hyper):
+    # Make `cs = (0, T0, T0 + T1, T0 + T1 + T2, ...)` whose
+    # diff is `theta_source['T']`
+    cs = jnp.cumsum(theta_source['T'])
+    cs = jnp.roll(cs, +1)
+    cs = cs.at[0].set(0.)
+    
+    t0 = hyper['data']['anchort'] - delta
+    offset = t0 + cs - cs[hyper['data']['anchor'] + hyper['data']['prepend']]
     return offset
 
 def pole_coefficients(theta_filter, hyper):
@@ -164,10 +257,10 @@ def pole_coefficients(theta_filter, hyper):
     return poles, c
 
 def full_kernelmatrix_root(
-    theta_source, theta_filter, hyper,
+    delta, theta_source, theta_filter, hyper,
     convolve=True, integrate=False, correlatef=True
 ):
-    offset = get_offset(theta_source, hyper)
+    offset = get_offset(delta, theta_source, hyper)
     
     def period_root_matrix(offset, theta_source, theta_filter):
         kernel = isokernels.resolve(hyper['source']['kernel_name'])
@@ -211,7 +304,7 @@ def full_kernelmatrix_root(
     return R # (N, M*N_P)
 
 def full_likelihood(theta, hyper, **kwargs):
-    noise_sigma, theta_source, theta_filter = unpack_theta(theta, hyper)
-    R = full_kernelmatrix_root(theta_source, theta_filter, hyper, **kwargs)
+    noise_sigma, delta, theta_source, theta_filter = unpack_theta(theta, hyper)
+    R = full_kernelmatrix_root(delta, theta_source, theta_filter, hyper, **kwargs)
     logl = core.loglikelihood_hilbert(R, hyper['data']['d'], noise_sigma**2)
     return logl

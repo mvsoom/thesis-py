@@ -57,7 +57,8 @@ def align_and_intersect(a, b):
 
 def yield_training_pairs(
     recordings,
-    markings
+    markings,
+    return_praat_gci_error=False
 ):
     """Yield all training pairs consisting of the true and Praat-estimated pitch periods in msec"""
     min_period_length_msec = constants.MIN_PERIOD_LENGTH_MSEC + constants._ZERO
@@ -97,6 +98,7 @@ def yield_training_pairs(
             if len(true_group) <= min_num_periods + 1:
                 continue
 
+            praat_gci_error = (praat_group - true_group) / k.fs * 1000 # msec
             true_periods = np.diff(true_group) / k.fs * 1000 # msec
             praat_periods = np.diff(praat_group) / k.fs * 1000 # msec
             
@@ -119,10 +121,13 @@ def yield_training_pairs(
                 )
                 continue
             
-            yield true_periods, praat_periods
+            if not return_praat_gci_error:
+                yield true_periods, praat_periods
+            else:
+                yield true_periods, praat_periods, praat_gci_error
 
 @__memory__.cache
-def get_aplawd_training_pairs(cacheid=18796):
+def get_aplawd_training_pairs(return_praat_gci_error=False):
     """
     Get the training pairs from the APLAWD database.
     
@@ -137,18 +142,21 @@ def get_aplawd_training_pairs(cacheid=18796):
     # Get pairs of 'true' pitch periods and the ones estimated by Praat based on the recordings
     training_pairs = list(yield_training_pairs(
         recordings,
-        markings
+        markings,
+        return_praat_gci_error
     ))
 
     return training_pairs
 
+@__memory__.cache
 def get_aplawd_training_pairs_subset(
     subset_size=5000,
     max_num_periods=100,
-    seed=411489
+    seed=411489,
+    return_praat_gci_error=False
 ):
     """Select a subset of the training pairs with a max number of pitch periods"""
-    training_pairs = get_aplawd_training_pairs()
+    training_pairs = get_aplawd_training_pairs(return_praat_gci_error)
 
     random.seed(seed)
     subset = random.choices(
@@ -158,6 +166,30 @@ def get_aplawd_training_pairs_subset(
     )
 
     return subset
+
+def _moving_average(x, w):
+    # https://stackoverflow.com/a/54628145/6783015
+    return np.convolve(x, np.ones(w), 'valid') / w
+
+def _iqr(x):
+    return float(np.diff(np.quantile(x, [.25, .75])))
+
+@__cache__
+def fit_praat_relative_gci_error():
+    fullset = get_aplawd_training_pairs_subset(return_praat_gci_error=True)
+    
+    praat_periods = np.concatenate([f[1] for f in fullset])
+    praat_gci_errors = np.concatenate([_moving_average(f[2], 2) for f in fullset])
+    
+    rel_error = praat_gci_errors/praat_periods
+    
+    # Convert median and IQR to the Gaussian counterparts
+    # See https://en.wikipedia.org/wiki/Interquartile_range#Distributions
+    # for the 1.349 coefficient
+    mu = np.median(rel_error)
+    sigma = _iqr(rel_error)/1.349
+
+    return mu, sigma
 
 @__cache__
 def fit_period_trajectory_kernel():

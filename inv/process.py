@@ -132,7 +132,8 @@ def get_source_amplitudes_tril(NP, M):
     """Get the cholesky of the covariance matrix that encodes the trajectory structure of the source `f` amplitudes"""
     
     # Get the envelope (NP x NP) covariance matrix
-    envelope_kernel, envelope_noise_sigma = source.get_source_envelope_kernel()
+    envelope_kernel = source.get_source_envelope_kernel()
+    envelope_noise_sigma = constants.SOURCE_F_ENVELOPE_NOISE_SIGMA
     
     index_points = jnp.arange(NP).astype(float)[:,None]
     envelope_K = envelope_kernel.matrix(index_points, index_points)
@@ -147,7 +148,12 @@ def get_source_amplitudes_tril(NP, M):
     L = jnp.kron(envelope_tril, I) # Not the other way around!
     return L # (NP*M, NP*M)
 
-def make_rand_hyper(triple, K=None, process_data_kwargs={}):
+def make_hyper(**kwargs):
+    hash = source._dict_hash(kwargs)
+    # FIXME in hyper_variation => need to update
+    
+
+def make_rand_hyper(triple, source_config=None, vtfilter=None, process_data_kwargs={}):
     import random; random.seed()
     import jax
     import warnings
@@ -162,18 +168,19 @@ def make_rand_hyper(triple, K=None, process_data_kwargs={}):
         segment, constants.TIMIT_FS_HZ, **process_data_kwargs
     )
     
-    source_config = random.choice(list(source._yield_all_configs()))
+    if source_config is None:
+        source_config = random.choice(list(source._yield_all_configs()))
     
     ftril = get_source_amplitudes_tril(
         data_config['NP'], source_config['kernel_M']
     )
     
-    if K is None:
+    if vtfilter is None:
         K = random.choice(filter.PZ.K_RANGE)
-    if random.random() < 0.5:
-        vtfilter = filter.AP(K, numpy_backend=jax.numpy, scipy_backend=jax.scipy)
-    else:
-        vtfilter = filter.PZ(K, numpy_backend=jax.numpy, scipy_backend=jax.scipy)
+        if random.random() < 0.5:
+            vtfilter = filter.AP(K, numpy_backend=jax.numpy, scipy_backend=jax.scipy)
+        else:
+            vtfilter = filter.PZ(K, numpy_backend=jax.numpy, scipy_backend=jax.scipy)
     
     hyper = dict(
         meta = dict(
@@ -194,4 +201,22 @@ def hyper_fullt(hyper):
     c = hyper.copy()
     c['data'] = hyper['data'].copy()
     c['data']['t'] = c['data']['fullt']
+    return c
+
+def hyper_variation(hyper, **kwargs):
+    def tryvary(d, k, v):
+        if k in d:
+            d[k] = v
+            return True
+        return False
+
+    c = hyper.copy()
+    for k, v in kwargs.items():
+        if not tryvary(c, k, v):
+            for key, elem in c.items():
+                if isinstance(elem, dict):
+                    c[key] = elem.copy()
+                    tryvary(c[key], k, v)
+    
+    #newhash = c['hash'].update(kwargs)
     return c

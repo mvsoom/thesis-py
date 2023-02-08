@@ -28,6 +28,9 @@ class PoleZeroFilter:
         self.impulse_response_energy_msec = constants.IMPULSE_RESPONSE_ENERGY_MSEC
         self.np = numpy_backend
         self.scipy = scipy_backend
+    
+    def __repr__(self):
+        return f'{self.__class__.__name__}({self.K})'
 
     def _cos_overlap_matrix(self, x, y):
         x1, x2 = x[:,None], x[None,:]

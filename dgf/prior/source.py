@@ -400,7 +400,7 @@ def get_source_envelope_kernel():
     envelope_kernel_name, _, results =\
         period.fit_period_trajectory_kernel()
 
-    envelope_lengthscale, envelope_noise_sigma =\
+    envelope_lengthscale, _ =\
         period.maximum_likelihood_envelope_params(results)
     
     envelope_variance = 1.
@@ -408,4 +408,4 @@ def get_source_envelope_kernel():
         envelope_variance, envelope_lengthscale
     )
     
-    return envelope_kernel, envelope_noise_sigma
+    return envelope_kernel
