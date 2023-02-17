@@ -147,8 +147,9 @@ def theta_trajectory_bijector(hyper):
     """Get the bijector `w ~ N(0,I) => theta ~ p(theta|hyper)`"""
     # Split the long vector w ~ N(0, I) into the different parameters...
     ndim_noise_sigma = 1
+    ndim_delta = 1
     split = tfb.Split(
-        [ndim_noise_sigma, 1, ndim_source(hyper), ndim_filter(hyper), ndim_g(hyper)]
+        [ndim_noise_sigma, ndim_delta, ndim_source(hyper), ndim_filter(hyper), ndim_g(hyper)]
     )
     
     # ... give them names ...

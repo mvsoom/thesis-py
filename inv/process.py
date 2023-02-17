@@ -71,7 +71,8 @@ def process_data(
     # Discard all data outside first and last pulse
     first, last = pulse_estimate_idx[0], pulse_estimate_idx[-1]
     d = fulld[first:last]
-    d = util.normalize_power(d)
+    d, multiplier = util.normalize_power(d, return_multiplier=True)
+    fulld = fulld*multiplier
     
     # Get the period estimate per pitch period
     def to_msec(idx):
