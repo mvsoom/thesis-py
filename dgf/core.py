@@ -136,15 +136,7 @@ def impose_null_integral_constraint(d, R, M, T, L):
 def cholesky_of_projection(q, M):
 #   assert len(q) == M
     nugget = M*jnp.finfo(float).eps
-    
-    # works for M = 32
     I = jnp.diag(jnp.repeat(1. + nugget, M))
-    
-    
-    #return I
-    
-    # gives nans
-    #I = jnp.eye(M)
     return jax_cholesky_update(I, q, -1.) # O(M²)
 
 def loglikelihood_hilbert(R, y, noise_power):

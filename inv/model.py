@@ -94,6 +94,9 @@ def noise_sigma_bijector():
 def delta_bijector(hyper):
     rel_mu, rel_sigma = period.fit_praat_relative_gci_error() # Fractional
     
+    ### testing!!
+    rel_sigma = .05
+    
     # Get a reference value for the pitch period
     a = hyper['data']['anchor'] + hyper['data']['prepend']
     Tref = hyper['data']['T_estimate'][a]
