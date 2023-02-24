@@ -94,6 +94,9 @@ def noise_sigma_bijector():
 def delta_bijector(hyper):
     rel_mu, rel_sigma = period.fit_praat_relative_gci_error() # Fractional
     
+    ### testing!!
+    rel_sigma = .05
+    
     # Get a reference value for the pitch period
     a = hyper['data']['anchor'] + hyper['data']['prepend']
     Tref = hyper['data']['T_estimate'][a]
@@ -147,8 +150,9 @@ def theta_trajectory_bijector(hyper):
     """Get the bijector `w ~ N(0,I) => theta ~ p(theta|hyper)`"""
     # Split the long vector w ~ N(0, I) into the different parameters...
     ndim_noise_sigma = 1
+    ndim_delta = 1
     split = tfb.Split(
-        [ndim_noise_sigma, 1, ndim_source(hyper), ndim_filter(hyper), ndim_g(hyper)]
+        [ndim_noise_sigma, ndim_delta, ndim_source(hyper), ndim_filter(hyper), ndim_g(hyper)]
     )
     
     # ... give them names ...

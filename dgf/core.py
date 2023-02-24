@@ -128,13 +128,13 @@ def impose_domain(R, t, a, b):
     return jnp.where(outside_domain, 0., R)
 
 def impose_null_integral_constraint(d, R, M, T, L):
-    assert R.shape[1] == M
+#   assert R.shape[1] == M
     q = d * phi_integrated_matrix_at(T, M, L)
-    q /= jnp.linalg.norm(q)
+    q = q/jnp.linalg.norm(q)
     return R @ cholesky_of_projection(q, M)
 
 def cholesky_of_projection(q, M):
-    assert len(q) == M
+#   assert len(q) == M
     nugget = M*jnp.finfo(float).eps
     I = jnp.diag(jnp.repeat(1. + nugget, M))
     return jax_cholesky_update(I, q, -1.) # O(M²)

@@ -4,7 +4,6 @@
 ##########################################################################
 # Note: %matplotlib inline will throw errors if Latex commands requiring #
 # packages loaded in the preamble are used!                              #
-# This is the case for TEX_JEFFREYS and TEX_PC.                          #
 ##########################################################################
 
 import matplotlib as mpl
@@ -26,8 +25,8 @@ plt.rcParams.update({
 })
 
 # Common plot settings
-TEXTWIDTH = 7.26913 # For wide figures
+TEXTWIDTH = 6.22404027778 # For wide figures
 
-def save_plot(dir, fig, name):
+def save_plot(fig, dir, name):
     fig.savefig(dir + '/' + name + '.pdf')
     return fig.savefig(dir + '/' + name + '.pgf')
