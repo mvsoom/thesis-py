@@ -94,7 +94,7 @@ def noise_sigma_bijector():
 def delta_bijector(hyper):
     rel_mu, rel_sigma = period.fit_praat_relative_gci_error() # Fractional
     
-    ### testing!!
+    ### testing!! Seems to work great
     rel_sigma = .05
     
     # Get a reference value for the pitch period
@@ -262,7 +262,8 @@ def pole_coefficients(theta_filter, hyper):
 
 def full_kernelmatrix_root(
     delta, theta_source, theta_filter, hyper,
-    convolve=True, integrate=False, correlatef=True
+    convolve=True, integrate=False,
+    correlatef=True, regularizeflow=True
 ):
     offset = get_offset(delta, theta_source, hyper)
     
@@ -297,18 +298,36 @@ def full_kernelmatrix_root(
                 integrate
             )
         
+        if regularizeflow:
+            # Better to do this within core just like null integrate constraint
+            
+            # Calculate L as a function of the source parameters
+            # R = R @ L
+            #c = (1/2)*theta_source['var_sigma']*(1/4)*(theta_source['Oq']*theta_source['T'])**2
+            # need analytical expression for a to proceed
+            pass
+        
         return R
 
     Rs = jax.vmap(period_root_matrix)(offset, theta_source, theta_filter) # (N_P, N, M)
     R = jnp.hstack(Rs) # FIXME: should be possible to avoid copying
     
     if correlatef:
+        # This mixes up basisfunctions such that they can span multiple pitch periods
         R = R @ hyper['ftril']
 
     return R # (N, M*N_P)
 
 def full_likelihood(theta, hyper, **kwargs):
     noise_sigma, delta, theta_source, theta_filter = unpack_theta(theta, hyper)
+    
+    # The basisfunctions in `R` are regularized by (control thru `kwargs`):
+    #  1. Smoothness determined by kernel type (always activated)
+    #  2. Flow regularization (activated by `regularizeflow=True`)
+    #  3. Glottal flow amplitude correlations (activated by `correlatef=True`)
     R = full_kernelmatrix_root(delta, theta_source, theta_filter, hyper, **kwargs)
+    
+    # `logl` includes the effects of `correlatef` and `regularizeflow` automatically
     logl = core.loglikelihood_hilbert(R, hyper['data']['d'], noise_sigma**2)
+    
     return logl
