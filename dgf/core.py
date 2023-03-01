@@ -188,7 +188,7 @@ def null_integral_constraint(d, M, T, L):
     return tril                         # integrating to 0 at O(M²) cost
 
 # This is derived from the analytical RBF model in `dgf/expected_total_flow.nb`
-_TOTAL_FLOW_FACTOR = 0.5 # TEST #0.0969358
+_TOTAL_FLOW_FACTOR = 0.0969358
 
 def expected_flow_constraint(
     d, integral_tril, var, M, T, L, flow_constraint=None
