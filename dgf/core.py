@@ -47,6 +47,18 @@ def phi_integrated_matrix_at(T, M, L):
     m = jnp.arange(1, M+1)
     return phi_integrated(T, m, L) # (M,)
 
+def phi_integrated_total_flow(M, T, L):
+    """
+    Analytical calculation of total glottal flow for
+    `phi_integrated` basis functions on the interval `[0,T]`.
+    Note: the gamma coefficients (determined by the spectral density)
+    are not taken into account here.
+    """
+    m = jnp.arange(1, M+1)
+    prefactor = jnp.sqrt(2*L)/((m*jnp.pi)**2)
+    total_flow = prefactor*(m*jnp.pi*T - L*jnp.sin(m*jnp.pi*T/L))
+    return total_flow # (M,)
+
 def phi_poles_matrix(t, M, T, L, poles):
     """Hilbert basis functions convolved with a set of poles"""
     m = jnp.arange(1, M+1)
@@ -67,24 +79,30 @@ def sqrt_gamma_coefficients(kernel, var, scale, M, L):
 
 def kernelmatrix_root_hilbert(kernel, var, scale, t, M, L):
     d = sqrt_gamma_coefficients(kernel, var, scale, M, L)
-    R = d[None,:] * phi_matrix(t, M, L)
+    phi = phi_matrix(t, M, L)
+    R = impose_kernel(phi, d)
     R = impose_domain(R, t, 0., L)
     return R # (len(t), M)
 
 def kernelmatrix_root_gfd(
-    kernel, var, scale, t, M, T, bf, impose_null_integral=True, integrate=False
+    kernel, var, scale, t, M, T, bf,
+    impose_null_integral=True, integrate=False, regularize_flow=True
 ):
     L = bf*T
     d = sqrt_gamma_coefficients(kernel, var, scale, M, L)
     phi = phi_integrated_matrix(t, M, L) if integrate else phi_matrix(t, M, L) 
-    R = d[None,:] * phi
-    if impose_null_integral:
-        R = impose_null_integral_constraint(d, R, M, T, L) # O(M²)
+    
+    R = impose_kernel(phi, d)
+    R = impose_constraints(
+        d, R, var, M, T, L, impose_null_integral, regularize_flow
+    ) # O(M²)
     R = impose_domain(R, t, 0., T)
+
     return R # (len(t), M)
 
 def kernelmatrix_root_gfd_oq(
-    kernel, var, r, t, M, T, Oq, bf, impose_null_integral=True, integrate=False
+    kernel, var, r, t, M, T, Oq, bf,
+    impose_null_integral=True, integrate=False, regularize_flow=True
 ):
     # Manually intervene to limit `Oq <= 1`, since this function
     # will return perfectly sensible results if this is not the case
@@ -93,22 +111,30 @@ def kernelmatrix_root_gfd_oq(
 
     GOI = T*(1 - Oq)
     scale = r*T*Oq
-    R = kernelmatrix_root_gfd(kernel, var, scale, t - GOI, M, T*Oq, bf, impose_null_integral, integrate)
+    R = kernelmatrix_root_gfd(
+        kernel, var, scale, t - GOI, M, T*Oq, bf,
+        impose_null_integral, integrate, regularize_flow
+    )
+
     return R # (len(t), M)
 
 def kernelmatrix_root_convolved_gfd(
-    kernel, var, scale, t, M, T, bf, poles, c, impose_null_integral=True
+    kernel, var, scale, t, M, T, bf, poles, c,
+    impose_null_integral=True, regularize_flow=True
 ):
     L = T*bf
     d = sqrt_gamma_coefficients(kernel, var, scale, M, L)
-    R = d[None,:] * phi_transfer_matrix(t, M, T, L, poles, c)
-    if impose_null_integral:
-        R = impose_null_integral_constraint(d, R, M, T, L)
+    phi = phi_transfer_matrix(t, M, T, L, poles, c)
+    
+    R = impose_kernel(phi, d)
+    R = impose_constraints(d, R, var, M, T, L, impose_null_integral, regularize_flow)
 #   R = impose_domain(R, t, 0., jnp.inf) # Already imposed by `phi_transfer_matrix()`
+
     return R # (len(t), M)
 
 def kernelmatrix_root_convolved_gfd_oq(
-    kernel, var, r, t, M, T, Oq, bf, poles, c, impose_null_integral=True
+    kernel, var, r, t, M, T, Oq, bf, poles, c,
+    impose_null_integral=True, regularize_flow=True
 ):
     # Note: we assume `Oq <= 1` here, otherwise this will trigger JAX's
     # NaN debugger for some reason. This is OK anyway since this function
@@ -118,26 +144,87 @@ def kernelmatrix_root_convolved_gfd_oq(
     GOI = T*(1 - Oq)
     scale = r*T*Oq
     R = kernelmatrix_root_convolved_gfd(
-        kernel, var, scale, t - GOI, M, T*Oq, bf, poles, c, impose_null_integral
+        kernel, var, scale, t - GOI, M, T*Oq, bf, poles, c,
+        impose_null_integral, regularize_flow
     )
     return R # (len(t), M)
+
+def impose_kernel(phi, d):
+    R = d[None,:] * phi # == phi @ jnp.diag(d)
+    return R
+
+def impose_constraints(
+    d, R, var, M, T, L, impose_null_integral, regularize_flow
+):
+    """
+    Constraints are imposed by multiplying the basis function matrix `R`
+    to the right by Cholesky factors `XXX_tril`encoding those constraints.
+    """
+    constraints = jnp.eye(M) # Start out with no constraints
+    
+    if impose_null_integral:
+        integral_tril = null_integral_constraint(d, M, T, L)
+        constraints = constraints @ integral_tril
+    else:
+        integral_tril = jnp.eye(M) # No constraint
+        
+    if regularize_flow:
+        flow_tril = expected_flow_constraint(d, integral_tril, var, M, T, L)
+        constraints = constraints @ flow_tril
+
+    R = R @ constraints
+    return R
 
 def impose_domain(R, t, a, b):
     """Make sure basis functions in `R` are nonzero only in `[a,b]`"""
     outside_domain = (t[:,None] < a) | (b < t[:,None])
-    return jnp.where(outside_domain, 0., R)
+    R = jnp.where(outside_domain, 0., R)
+    return R
 
-def impose_null_integral_constraint(d, R, M, T, L):
-#   assert R.shape[1] == M
+def null_integral_constraint(d, M, T, L):
     q = d * phi_integrated_matrix_at(T, M, L)
     q = q/jnp.linalg.norm(q)
-    return R @ cholesky_of_projection(q, M)
+    tril = cholesky_of_projection(q, M) # Project down to the space of functions
+    return tril                         # integrating to 0 at O(M²) cost
+
+# This is derived from the analytical RBF model in `dgf/expected_total_flow.nb`
+_TOTAL_FLOW_FACTOR = 0.5 # TEST #0.0969358
+
+def expected_flow_constraint(
+    d, integral_tril, var, M, T, L, flow_constraint=None
+):
+    """Calculate the Cholesky constraint such that the expected flow is `flow_constraint`"""
+    a = dgf_expected_total_flow(d, integral_tril, M, T, L)
+    
+    if not flow_constraint:
+        flow_constraint = _TOTAL_FLOW_FACTOR*jnp.sqrt(var)*T**2
+    
+    anorm = jnp.linalg.norm(a)
+    gamma = 1. - (flow_constraint/anorm)**2
+    
+    q = a/anorm
+    tril = cholesky_update_to_identity(q, -gamma) # O(M²)
+    return tril
+
+def dgf_expected_total_flow(d, integral_tril, M, T, L):
+    """
+    Calculate the expected total flow for each DGF basisfunction
+    taking into account kernel characteristics (through `d`) and null
+    integral constraint (through `integral_tril`).
+    """
+    omega = phi_integrated_total_flow(M, T, L)
+    expected_total_flow = (omega * d) @ integral_tril
+    return expected_total_flow # (M,)
 
 def cholesky_of_projection(q, M):
-#   assert len(q) == M
+    return cholesky_update_to_identity(q, -1.)
+
+def cholesky_update_to_identity(q, multiplier):
+    # Calculate chol(I + multiplier*(q @ q.T))
+    M = len(q)
     nugget = M*jnp.finfo(float).eps
     I = jnp.diag(jnp.repeat(1. + nugget, M))
-    return jax_cholesky_update(I, q, -1.) # O(M²)
+    return jax_cholesky_update(I, q, multiplier) # O(M²)
 
 def loglikelihood_hilbert(R, y, noise_power):
     """Implement *positive* log likelihood from Section 3.2 in Solin & Särkkä (2020)"""
@@ -218,3 +305,24 @@ def loglikelihood_hilbert_grid(kernel, var, scale, M, y, noise_power):
 
     negative_logl = log_Q_term/2 + bilinear_term/2 + order_term/2
     return -negative_logl
+
+
+
+####
+
+def kernelmatrix_root_gfd_new(
+    kernel, var, scale, t, M, T, bf,
+    impose_null_integral=True, integrate=False, regularize_flow=True
+):
+    left = domain_constraint(t, 0., T)
+    phi = phi_integrated_matrix(t, M, L) if integrate else phi_matrix(t, M, L)
+    right = cholesky_constraints(
+        kernel, var, scale, t, M, T, bf, impose_null_integral, regularize_flow
+    )
+    
+    R = left * jnp.linalg.multi_dot([phi, *right])
+    return R
+
+def domain_constraint(t, a, b):
+    mask = (a <= t[:,None]) & (t[:,None] <= b)
+    return mask # (len(t), 1)

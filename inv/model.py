@@ -263,7 +263,7 @@ def pole_coefficients(theta_filter, hyper):
 def full_kernelmatrix_root(
     delta, theta_source, theta_filter, hyper,
     convolve=True, integrate=False,
-    correlatef=True, regularizeflow=True
+    correlatef=True, regularize_flow=True
 ):
     offset = get_offset(delta, theta_source, hyper)
     
@@ -282,7 +282,8 @@ def full_kernelmatrix_root(
                 hyper['meta']['bf'],
                 poles,
                 c,
-                hyper['source']['impose_null_integral']
+                hyper['source']['impose_null_integral'],
+                regularize_flow
             )
         else:
             R = core.kernelmatrix_root_gfd_oq(
@@ -295,17 +296,9 @@ def full_kernelmatrix_root(
                 theta_source['Oq'],
                 hyper['meta']['bf'],
                 hyper['source']['impose_null_integral'],
-                integrate
+                integrate,
+                regularize_flow
             )
-        
-        if regularizeflow:
-            # Better to do this within core just like null integrate constraint
-            
-            # Calculate L as a function of the source parameters
-            # R = R @ L
-            #c = (1/2)*theta_source['var_sigma']*(1/4)*(theta_source['Oq']*theta_source['T'])**2
-            # need analytical expression for a to proceed
-            pass
         
         return R
 
@@ -323,11 +316,11 @@ def full_likelihood(theta, hyper, **kwargs):
     
     # The basisfunctions in `R` are regularized by (control thru `kwargs`):
     #  1. Smoothness determined by kernel type (always activated)
-    #  2. Flow regularization (activated by `regularizeflow=True`)
+    #  2. Flow regularization (activated by `regularize_flow=True`)
     #  3. Glottal flow amplitude correlations (activated by `correlatef=True`)
     R = full_kernelmatrix_root(delta, theta_source, theta_filter, hyper, **kwargs)
     
-    # `logl` includes the effects of `correlatef` and `regularizeflow` automatically
+    # `logl` includes the effects of `correlatef` and `regularize_flow` automatically
     logl = core.loglikelihood_hilbert(R, hyper['data']['d'], noise_sigma**2)
     
     return logl
