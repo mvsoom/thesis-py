@@ -308,7 +308,7 @@ def loglikelihood_hilbert_grid(kernel, var, scale, M, y, noise_power):
 
 
 
-####
+#### TODO
 
 def kernelmatrix_root_gfd_new(
     kernel, var, scale, t, M, T, bf,
