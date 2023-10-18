@@ -18,7 +18,7 @@ __all__ = [
 if not ('WORKING_ENVIRONMENT_ACTIVATED' in os.environ):
     raise RuntimeError(
         'Working environment not activated. '
-        'Please run `$ source activate` first'
+        'Please run load .env file first'
     )
 
 def __projectdir__(s=''):

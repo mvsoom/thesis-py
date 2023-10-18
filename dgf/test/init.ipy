@@ -1,3 +1,7 @@
+# Define project directory and other environment variables
+%load_ext dotenv
+%dotenv
+
 # Set working directory to the project directory
 import os
 os.chdir(os.environ['PROJECTDIR'])

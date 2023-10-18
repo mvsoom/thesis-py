@@ -129,6 +129,7 @@ pylint==2.15.3
 pyparsing==3.0.8
 pyrsistent==0.18.1
 python-dateutil==2.8.2
+python-dotenv==1.0.0
 python-lsp-jsonrpc==1.0.0
 python-lsp-server==1.5.0
 pytoolconfig==1.2.2

@@ -1,28 +1,25 @@
 # README
 
+Project uses Python 3.10
+
 # TODO:
+
+Apply for TPU cloud program for large scale evaluation:
+https://docs.google.com/forms/d/e/1FAIpQLSeBXCs4vatyQUcePgRKh_ZiKhEODXkkoeqAKzFa_d-oSVp3iw/viewform
+
+Another evaluation dataset: OPENGLOT
+https://www.mdpi.com/2076-3417/13/15/8775
 
 - Precondition the linear solve for the source amplitudes with nearby points -- effectively re-using Cholesky(Z) -- this requires an approximate (sparse) method
 - https://github.com/garrettj403/SciencePlots (installation fails on a mysterious error)
 
 # Activating the environment
 
-`$ source activate`
+0. Enable VPN and connect to remote via vscode
 
-# Connecting to remote server from local
-
-WARNING: remote has different Python version installed -- this gives `pip` troubles sometimes. We are on Python 3.8.10.
-
-0. local: **connect to eduroam**
-1. local: Turn on VPN
-2. local: `ssh marnix@134.184.26.35`
-3. remote: `cd thesis/py`
-4. remote `source activate` <--- !!!
-5. remote: `./jlremote.sh`
-6. local: `./jlconnect.sh`
-
-Port 9999 is used. For file transfer: connect to `sftp://134.184.26.35` with
-VPN enabled.
+1. Use the /venv/ environment (Python 3.10) in the usual way. For .ipynb notebooks, select kernel from that /venv/
+2. Set PROJECTDIR variable in .env file to the project root
+3. When developing from IPython or Jupyter notebook, %run init.ipy. This will define the environment and root path.
 
 # Possible improvements
 
