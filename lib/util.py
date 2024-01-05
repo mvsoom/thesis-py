@@ -5,7 +5,12 @@ from dynesty import plotting
 import matplotlib.pyplot as plt
 
 def normalize_power(d, return_multiplier=False):
-    multiplier = np.sqrt(len(d)/np.dot(d, d))
+    # If d contains multiple channels (columns), normalize each channel with respect to channel 1    
+    if len(d.shape) == 1:
+        multiplier = np.sqrt(len(d)/np.dot(d, d))
+    else:
+        assert len(d.shape) == 2
+        _, multiplier = normalize_power(d[:,0], return_multiplier=True)
     normalized = multiplier*d
     return (normalized, multiplier) if return_multiplier else normalized
 
