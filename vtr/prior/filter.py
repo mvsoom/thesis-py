@@ -166,7 +166,8 @@ def filter_trajectory_bijector(
         num_pitch_periods,
         vtfilter,
         T_estimate,
-        F_estimate
+        F_estimate,
+        noiseless_estimates
     )
     
     # Drop first (TFB) dimensions to retain only (xy)

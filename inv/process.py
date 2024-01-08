@@ -23,6 +23,7 @@ def resample_data(data, fs, fs_new):
     return new_data
 
 def standardize_data(d, fs, standard_fs=constants.FS_HZ):
+    d = d.astype(float)
     d = resample_data(d, fs, standard_fs)
     d = util.normalize_power(d)
     return d, standard_fs
@@ -41,8 +42,11 @@ def _get_middle_n_elements(a, n):
 def _num_pitch_periods(pulse_estimate):
     return len(pulse_estimate) - 1
 
+def _nans_like(a):
+    return np.full(a.shape, np.nan, like=a)
+
 def process_data(
-    fulld,
+    rawdata,
     fs,
     pulse_estimate_idx=None,
     F_estimate=None,
@@ -51,7 +55,22 @@ def process_data(
     max_NP=np.inf,
     return_full=False
 ):
-    fulld, fs = standardize_data(fulld, fs)
+    """Process rawdata for inference into a dictionary
+    
+    `rawdata` is either a 1D speech pressure signal or a 2D multichannel
+    array, where the first channel is the speech pressure signal and the other
+    (aux) channels are processed and normalized in the same way as the first channel.
+    They are then stored in the dictionary as `fullaux` and `aux`; and are nans if
+    `rawdata` is 1D.
+    """
+    rawdata, fs = standardize_data(rawdata, fs)
+    if rawdata.ndim == 1:
+        fulld = rawdata
+        fullaux = _nans_like(fulld)
+    else:
+        fulld = rawdata[:,0]
+        fullaux = np.squeeze(rawdata[:,1:])
+
     dt = 1/fs*1000.
     
     ##########
@@ -70,9 +89,13 @@ def process_data(
     
     # Discard all data outside first and last pulse
     first, last = pulse_estimate_idx[0], pulse_estimate_idx[-1]
+
     d = fulld[first:last]
+    aux = fullaux[first:last]
+
     d, multiplier = util.normalize_power(d, return_multiplier=True)
     fulld = fulld*multiplier
+    fullaux = fullaux*multiplier
     
     # Get the period estimate per pitch period
     def to_msec(idx):
@@ -110,10 +133,12 @@ def process_data(
     
     data = dict(
         fulld=fulld,
+        fullaux=fullaux,
         fullt=fullt,
         fs=fs,
         dt=dt,
         d=d,
+        aux=aux,
         t=t,
         prepend=prepend,
         anchor=anchor,
