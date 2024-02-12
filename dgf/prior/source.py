@@ -289,7 +289,7 @@ def _fit_all_source_bijectors():
     for config in _yield_all_configs():
         fit_source_bijector(config)
 
-def trajectify_bijector(bstatic, num_pitch_periods):
+def trajectify_bijector(bstatic, num_pitch_periods, constant=False):
     """Turn a static bijector `bstatic` into a trajectory bijector with `num_pitch_periods` using the fitted source GP based on ground truth period trajectories in the APLAWD database""" 
     kernel_name, _, results =\
         period.fit_period_trajectory_kernel()
@@ -302,7 +302,8 @@ def trajectify_bijector(bstatic, num_pitch_periods):
         num_pitch_periods,
         kernel_name,
         envelope_lengthscale,
-        envelope_noise_sigma
+        envelope_noise_sigma,
+        constant=constant
     )
 
     return btraj
@@ -311,7 +312,8 @@ def source_trajectory_bijector(
     num_pitch_periods,
     config,
     T_estimate=None,
-    noiseless_estimates=False
+    noiseless_estimates=False,
+    constant=False,
 ):
     """
     Get a bijector sending N(0,I_n) to (var_sigma, r, T[, Oq]) samples where
@@ -324,8 +326,8 @@ def source_trajectory_bijector(
     estimation error.
     """
     marginal_bijector = fit_source_bijector(config)
-    trajectory_bijector = trajectify_bijector(marginal_bijector, num_pitch_periods)
-    
+    trajectory_bijector = trajectify_bijector(marginal_bijector, num_pitch_periods, constant=constant)
+
     # Condition the bijector on T estimates (if any)
     ndim = SOURCE_NDIM(config)
     observation = np.full((num_pitch_periods, ndim), np.nan)
@@ -343,7 +345,8 @@ def source_trajectory_bijector(
         trajectory_bijector,
         observation,
         noise_cov,
-        noise_mean
+        noise_mean,
+        constant=constant
     )
     
     return trajectory_bijector

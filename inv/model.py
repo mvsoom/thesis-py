@@ -16,16 +16,25 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
 def ndim_source(hyper):
-    return source.SOURCE_NDIM(hyper['source'])*hyper['data']['NP']
+    if hyper['meta']['constant']:
+        return source.SOURCE_NDIM(hyper['source'])
+    else:
+        return source.SOURCE_NDIM(hyper['source'])*hyper['data']['NP']
 
 def ndim_filter(hyper):
-    return hyper['filter'].ndim()*hyper['data']['NP']
+    if hyper['meta']['constant']:
+        return hyper['filter'].ndim()
+    else:
+        return hyper['filter'].ndim()*hyper['data']['NP']
 
 def ndim_f(hyper):
     return hyper['source']['kernel_M']*hyper['data']['NP']
 
 def ndim_g(hyper):
-    return hyper['filter'].ndim_g()*hyper['data']['NP']
+    if hyper['meta']['constant']:
+        return hyper['filter'].ndim_g()
+    else:
+        return hyper['filter'].ndim_g()*hyper['data']['NP']
 
 def ndim(hyper):
     """The total dimension of the parameter space. Note that we don't count the source amplitudes since they are marginalized over"""
@@ -34,7 +43,7 @@ def ndim(hyper):
     return ndim_noise + ndim_delta + ndim_source(hyper) + ndim_filter(hyper) + ndim_g(hyper)
 
 def source_labels(hyper):
-    return constants.SOURCE_PARAMS if hyper['source']['use_oq'] else  constants.SOURCE_PARAMS[:-1]
+    return constants.SOURCE_PARAMS if hyper['source']['use_oq'] else constants.SOURCE_PARAMS[:-1]
 
 def filter_labels(hyper):
     return [f"${c}_{{{i+1}}}$" for c in ('x', 'y') for i in range(hyper['filter'].K)]
@@ -94,7 +103,7 @@ def noise_sigma_bijector():
 def delta_bijector(hyper):
     rel_mu, rel_sigma = period.fit_praat_relative_gci_error() # Fractional
     
-    ### testing!! Seems to work great
+    ### TODO: testing!! Seems to work great
     rel_sigma = .05
     
     # Get a reference value for the pitch period
@@ -142,7 +151,8 @@ def filter_g_bijector(hyper):
         hyper['data']['NP'],
         envelope_kernel_name,
         envelope_lengthscale,
-        envelope_noise_sigma
+        envelope_noise_sigma,
+        constant=hyper['meta']['constant']
     )
     return bg
 
@@ -180,7 +190,8 @@ def theta_trajectory_bijector(hyper):
         hyper['data']['NP'],
         hyper['source'],
         hyper['data']['T_estimate'],
-        hyper['meta']['noiseless_estimates']
+        hyper['meta']['noiseless_estimates'],
+        constant=hyper['meta']['constant']
     )
     
     bfilter = filter.filter_trajectory_bijector(
@@ -188,7 +199,8 @@ def theta_trajectory_bijector(hyper):
         hyper['filter'],
         hyper['data']['T_estimate'],
         hyper['data']['F_estimate'],
-        hyper['meta']['noiseless_estimates']
+        hyper['meta']['noiseless_estimates'],
+        constant=hyper['meta']['constant']
     )
     
     bg = filter_g_bijector(hyper)

@@ -90,7 +90,7 @@ def _fit_all_TFB_filter_bijectors():
         for K in vtfilterclass.K_RANGE:
             fit_TFB_filter_bijector(vtfilterclass(K))
 
-def trajectify_bijector(bstatic, num_pitch_periods):
+def trajectify_bijector(bstatic, num_pitch_periods, constant=False):
     """Turn a static bijector `bstatic` into a trajectory bijector with `num_pitch_periods` using the fitted filter GP based on ground truth F1-F3 trajectories in the VTRFormants database""" 
     kernel_name, _, results =\
         formant.fit_formants_trajectory_kernel()
@@ -103,7 +103,8 @@ def trajectify_bijector(bstatic, num_pitch_periods):
         num_pitch_periods,
         kernel_name,
         envelope_lengthscale,
-        envelope_noise_sigma
+        envelope_noise_sigma,
+        constant=constant
     )
 
     return btraj
@@ -113,7 +114,8 @@ def TFB_filter_trajectory_bijector(
     vtfilter,
     T_estimate=None,
     F_estimate=None,
-    noiseless_estimates=False
+    noiseless_estimates=False,
+    constant=False
 ):
     """
     Get a bijector sending N(0,I_n) to (T,F^R,B^R,x,y) samples where the
@@ -127,7 +129,7 @@ def TFB_filter_trajectory_bijector(
     into account Praat's estimation error.
     """
     marginal_bijector = fit_TFB_filter_bijector(vtfilter)
-    trajectory_bijector = trajectify_bijector(marginal_bijector, num_pitch_periods)
+    trajectory_bijector = trajectify_bijector(marginal_bijector, num_pitch_periods, constant=constant)
     
     # Condition the bijector on F and T estimates (if any)
     ndim = TFBXY_NDIM(vtfilter.K)
@@ -150,7 +152,8 @@ def TFB_filter_trajectory_bijector(
         trajectory_bijector,
         observation,
         noise_cov,
-        noise_mean
+        noise_mean,
+        constant=constant
     )
     
     return trajectory_bijector
@@ -160,19 +163,21 @@ def filter_trajectory_bijector(
     vtfilter,
     T_estimate=None,
     F_estimate=None,
-    noiseless_estimates=False
+    noiseless_estimates=False,
+    constant=False
 ):
     b = TFB_filter_trajectory_bijector(
         num_pitch_periods,
         vtfilter,
         T_estimate,
         F_estimate,
-        noiseless_estimates
+        noiseless_estimates,
+        constant=constant
     )
     
     # Drop first (TFB) dimensions to retain only (xy)
     TFB_dims = range(bandwidth.TFB_NDIM)
-    return bijectors.drop_dimensions(b, TFB_dims)
+    return bijectors.drop_dimensions(b, TFB_dims, constant=constant)
 
 def filter_trajectory_prior(
     num_pitch_periods,

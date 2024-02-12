@@ -28,6 +28,11 @@ def standardize_data(d, fs, standard_fs=constants.FS_HZ):
     d = util.normalize_power(d)
     return d, standard_fs
 
+def setxlim(f, hyper, margin=0.05):
+    ts = hyper['data']['fullt'][f != 0.]
+    from matplotlib.pyplot import xlim
+    xlim(ts[0]*(1-margin), ts[-1]*(1+margin))
+
 def get_pulse_estimate_idx(d, fs):
     try:
         return praat.get_pulses(d, fs)
